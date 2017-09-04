@@ -2,5 +2,13 @@
 name = "pprzlink"
 version = "0.1.0"
 authors = ["Michal Podhradsky <michal.podhradsky@aggiemail.usu.edu>"]
+description = "Rust library for pprzlink"
+license = "GPL-3.0"
+documentation = "https://github.com/paparazzi/pprzlink-rust/README.md"
+homepage = "https://github.com/paparazzi/pprzlink-rust"
+repository = "https://github.com/paparazzi/pprzlink-rust"
+keywords = ["UAV", "pprzlink","paparazzi"]
+categories = ["embedded", "parsing","parser-implementations"]
 
 [dependencies]
+
