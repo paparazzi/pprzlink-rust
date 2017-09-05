@@ -11,4 +11,5 @@ keywords = ["UAV", "pprzlink","paparazzi"]
 categories = ["embedded", "parsing","parser-implementations"]
 
 [dependencies]
-
+xml-rs = "0.6"
+ivyrust = "0.1.1"
