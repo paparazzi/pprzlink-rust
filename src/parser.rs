@@ -12,14 +12,14 @@ use self::xml::attribute::OwnedAttribute;
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum PprzProtocolVersion {
     ProtocolV1,
-    ProtocolV2,
+    // ProtocolV2,
 }
 
 impl fmt::Display for PprzProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {
             PprzProtocolVersion::ProtocolV1 => String::from("v1.0"),
-            PprzProtocolVersion::ProtocolV2 => String::from("v2.0"),
+            //PprzProtocolVersion::ProtocolV2 => String::from("v2.0"),
         };
         write!(f, "{}", s)
     }
@@ -148,7 +148,7 @@ pub struct PprzMessage {
     version: PprzMessageVersion, // maybe obsolete?
     id: u8, // MSG_ID
     fields: Vec<PprzField>,
-    name: String,
+    pub name: String,
 }
 
 impl PprzMessage {
@@ -162,34 +162,36 @@ impl PprzMessage {
     }
 }
 
+// TODO: use display for printing IVY compatible regexprs ?
 impl fmt::Display for PprzMessage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let _ = write!(f,
-               "MESSAGE\nid: {}, name: {},
+        let _ = write!(
+            f,
+            "MESSAGE\nid: {}, name: {},
                protocol: {}, source: {}, destinaton: {}, component: {}, version: {},
                fields:",
-               self.id,
-               self.name,
-               self.protocol,
-               self.source,
-               self.destination,
-               self.component,
-               self.version
-               );
+            self.id,
+            self.name,
+            self.protocol,
+            self.source,
+            self.destination,
+            self.component,
+            self.version
+        );
         for field in &self.fields {
-        	let _ = write!(f, "{}",field);
+            let _ = write!(f, "{}", field);
         }
-        write!(f,"\n")
+        write!(f, "\n")
     }
 }
 
 
 
 /// each class has a vector of messages
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PprzMsgClass {
-    messages: Vec<PprzMessage>,
-    id: PprzMsgClassID,
+    pub messages: Vec<PprzMessage>,
+    pub id: PprzMsgClassID,
 }
 
 impl PprzMsgClass {
@@ -205,10 +207,10 @@ impl PprzMsgClass {
 
 impl fmt::Display for PprzMsgClass {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    	let _ = write!(f, "MESSAGE CLASS\nid: {},\nmessages:\n", self.id);
-    	for msg in &self.messages {
-    		let _ = write!(f, "{}", msg);
-    	}
+        let _ = write!(f, "MESSAGE CLASS\nid: {},\nmessages:\n", self.id);
+        for msg in &self.messages {
+            let _ = write!(f, "{}", msg);
+        }
         write!(f, "\n")
     }
 }
@@ -232,11 +234,75 @@ impl PprzDictionary {
         }
         return false;
     }
+
+    pub fn find_msg_by_name(&self, name: &str) -> Option<PprzMessage> {
+        for class in &self.classes {
+            for msg in &class.messages {
+                if msg.name == name {
+                    return Some(msg.clone());
+                }
+            }
+        }
+        None
+    }
+
+    pub fn get_msgs(self, msg_class_id: PprzMsgClassID) -> Option<PprzMsgClass> {
+        for class in self.classes {
+            if class.id == msg_class_id {
+                return Some(class.clone());
+            }
+        }
+        None
+    }
+
+    pub fn get_msg_name(&self, msg_class_id: PprzMsgClassID, msg_id: u8) -> Option<String> {
+        for class in &self.classes {
+            if class.id == msg_class_id {
+                for msg in &class.messages {
+                    if msg.id == msg_id {
+                        return Some(msg.name.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+
+    pub fn get_msg_fields(&self,
+                          msg_class_id: PprzMsgClassID,
+                          msg_name: &str)
+                          -> Option<Vec<PprzField>> {
+        for class in &self.classes {
+            if class.id == msg_class_id {
+                for msg in &class.messages {
+                    if msg.name == msg_name {
+                        return Some(msg.fields.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+
+    pub fn get_msg_id(&self, msg_class_id: PprzMsgClassID, msg_name: &str) -> Option<u8> {
+        for class in &self.classes {
+            if class.id == msg_class_id {
+                for msg in &class.messages {
+                    if msg.name == msg_name {
+                        return Some(msg.id);
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 impl fmt::Display for PprzDictionary {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    	let _ = write!(f, "DICTIONARY: \n");
+        let _ = write!(f, "DICTIONARY: \n");
         for class in &self.classes {
             let _ = write!(f, "class {}", class);
         }
@@ -247,6 +313,11 @@ impl fmt::Display for PprzDictionary {
 
 
 
+
+
+///
+/// Xml parser functions
+///
 fn has_attribute(attributes: &Vec<OwnedAttribute>, value: &str) -> (bool, usize) {
     let mut idx = 0;
     for attr in attributes {
@@ -257,9 +328,6 @@ fn has_attribute(attributes: &Vec<OwnedAttribute>, value: &str) -> (bool, usize)
     }
     return (false, idx);
 }
-
-
-
 
 pub fn build_dictionary(file: File) -> PprzDictionary {
     let file = BufReader::new(file);
