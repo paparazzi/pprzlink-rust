@@ -6,10 +6,15 @@ pub mod parser;
 mod tests {
     use super::transport::PprzTransport;
 	use super::parser;
+	use std::fs::File;
 
 	#[test]
-	fn create_dictionary() {
-		parser::build_dictionary();
+	fn parse_xml_file() {
+		let file = File::open("test/messages.xml")
+        .unwrap();
+		let dictionary = parser::build_dictionary(file);
+		// 5 classes in messages.xml
+		assert_eq!(dictionary.classes.len(),5);
 	}
 
     #[test]

@@ -44,7 +44,7 @@ impl fmt::Display for PprzMessageVersion {
 
 /// ID of all message classes
 #[derive(Debug, Copy, PartialEq, PartialOrd)]
-enum PprzMsgClassID {
+pub enum PprzMsgClassID {
     Telemetry,
     Datalink,
     Ground,
@@ -219,8 +219,8 @@ impl fmt::Display for PprzMsgClass {
 
 /// Dictionary of all available messages
 #[derive(Debug)]
-struct PprzDictionary {
-    classes: Vec<PprzMsgClass>,
+pub struct PprzDictionary {
+    pub classes: Vec<PprzMsgClass>,
 }
 
 impl PprzDictionary {
@@ -261,14 +261,9 @@ fn has_attribute(attributes: &Vec<OwnedAttribute>, value: &str) -> (bool, usize)
 
 
 
-pub fn build_dictionary() {
-    let file = File::open("/home/podhrad/Documents/Paparazzi/pprzlink/message_definitions/v1.0/messages.xml")
-        .unwrap();
+pub fn build_dictionary(file: File) -> PprzDictionary {
     let file = BufReader::new(file);
-
     let mut dictionary = PprzDictionary { classes: vec![] };
-
-
     let parser = EventReader::new(file);
     for e in parser {
         match e {
@@ -416,6 +411,5 @@ pub fn build_dictionary() {
             _ => {}
         }
     }
-
-    println!("{}", dictionary);
+    dictionary
 }
