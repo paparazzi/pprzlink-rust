@@ -1,90 +1,145 @@
 pub mod transport;
 pub mod parser;
-
+extern crate ivyrust;
 
 #[cfg(test)]
 mod tests {
     use super::transport::PprzTransport;
     use super::parser;
+    use super::parser::{PprzMsgClassID};
     use std::fs::File;
-    
+
+
+    use super::ivyrust;
+    use std::{thread, time};
+
+
+    //==========================
+    // Test pprzlink ivy
+    //==========================
+    #[test]
+    fn test_pprzlink_to_ivy() {
+        let (buffer_of_messages, _) = initialize_vectors();
+        let dictionary = get_dictionary();
+
+        ivyrust::ivy_init(String::from("RUST_IVY"), String::from("RUST_IVY Ready"));
+        ivyrust::ivy_start(None);
+
+        // spin the main loop
+        let _ = thread::spawn(move || if let Err(e) = ivyrust::ivy_main_loop() {
+                                   println!("Error in Ivy main loop: {}", e);
+                               } else {
+                                   println!("ivy main loop finished finished");
+                               });
+        // sleep so we can finish initialization
+        thread::sleep(time::Duration::from_millis(1000));
+
+        for message in buffer_of_messages {
+            let mut rx = PprzTransport::new();
+            let mut msg_available = false;
+            for b in message {
+                if msg_available {
+                    panic!("Too many bytes!");
+                }
+                msg_available = rx.parse_byte(b);
+            }
+            assert!(msg_available);
+
+            let name = dictionary
+                .get_msg_name(PprzMsgClassID::Telemetry, rx.buf[1])
+                .unwrap();
+
+            let mut msg = dictionary.find_msg_by_name(&name).unwrap();
+            msg.update(&rx.buf);
+
+            ivyrust::ivy_send_msg(msg.to_string());
+        }
+
+        // sleep a bit so we can finish sending messages
+        thread::sleep(time::Duration::from_millis(1000));
+        ivyrust::ivy_stop();
+    }
+
+    //==========================
+    // Test pprzlink parser
+    //==========================
     fn get_dictionary() -> parser::PprzDictionary {
-    	let file = File::open("test/messages.xml").unwrap();
+        let file = File::open("test/messages.xml").unwrap();
         let dictionary = parser::build_dictionary(file);
         assert_eq!(dictionary.classes.len(), 5);
         dictionary
     }
 
-	#[test]
-	fn dictionary_find_msg_by_name() {
-		let dictionary = get_dictionary();
-        
+    #[test]
+    fn dictionary_find_msg_by_name() {
+        let dictionary = get_dictionary();
+
         let name = String::from("PING");
         let msg = match dictionary.find_msg_by_name(&name) {
-        	Some(m) => m,
-        	None => panic!("No message found"),
+            Some(m) => m,
+            None => panic!("No message found"),
         };
-        
-        println!("Msg: {}",msg);
-        assert_eq!(msg.name,name);
-	}
-	
-	#[test]
-	fn dictionary_get_msgs() {
-		let dictionary = get_dictionary();
-        
-		let id = parser::PprzMsgClassID::Datalink;
-		let msgs = match dictionary.get_msgs(id) {
-			Some(m) => m,
-			None => panic!("No message class found"),
-		};
-		
-		assert_eq!(msgs.messages.len(), 54);
-	}
-	
-	#[test]
-	fn dictionary_get_msg_name() {
-		let dictionary = get_dictionary();
-        
+
+        println!("Msg: {}", msg);
+        assert_eq!(msg.name, name);
+    }
+
+    #[test]
+    fn dictionary_get_msgs() {
+        let dictionary = get_dictionary();
+
+        let id = parser::PprzMsgClassID::Datalink;
+        let msgs = match dictionary.get_msgs(id) {
+            Some(m) => m,
+            None => panic!("No message class found"),
+        };
+
+        assert_eq!(msgs.messages.len(), 54);
+    }
+
+    #[test]
+    fn dictionary_get_msg_name() {
+        let dictionary = get_dictionary();
+
         let class_id = parser::PprzMsgClassID::Telemetry;
         let msg_id = 30;
         let name = match dictionary.get_msg_name(class_id, msg_id) {
-        	Some(n) => n,
-        	None => panic!("Message not found"),
+            Some(n) => n,
+            None => panic!("Message not found"),
         };
-        
+
         assert_eq!(name, "DATALINK_REPORT");
-	}
-	
-	#[test]
-	fn dictionary_get_msg_id() {
-		let dictionary = get_dictionary();
-		
-		let class_id = parser::PprzMsgClassID::Telemetry;
-		let name = "GPS_SOL";
-		let id = match dictionary.get_msg_id(class_id,name) {
-			Some(i) => i,
-			None => panic!("No message found"),
-		};
-		
-		assert_eq!(id,17);
-	}
-	
-	//get_msg_fields
-	#[test]
-	fn dictionary_get_msg_fields() {
-		let dictionary = get_dictionary();
-		
-		let class_id = parser::PprzMsgClassID::Telemetry;
-		let name = "GPS";
-		let fields = match dictionary.get_msg_fields(class_id, name) {
-			Some(f) => f,
-			None => panic!("Message not found"),
-		};
-		
-		assert_eq!(fields.len(),11);
-	}
-    
+    }
+
+    #[test]
+    fn dictionary_get_msg_id() {
+        let dictionary = get_dictionary();
+
+        let class_id = parser::PprzMsgClassID::Telemetry;
+        let name = "GPS_SOL";
+        let id = match dictionary.get_msg_id(class_id, name) {
+            Some(i) => i,
+            None => panic!("No message found"),
+        };
+
+        assert_eq!(id, 17);
+    }
+
+
+    #[test]
+    fn dictionary_get_msg_fields() {
+        let dictionary = get_dictionary();
+
+        let class_id = parser::PprzMsgClassID::Telemetry;
+        let name = "GPS";
+        let fields = match dictionary.get_msg_fields(class_id, name) {
+            Some(f) => f,
+            None => panic!("Message not found"),
+        };
+
+        assert_eq!(fields.len(), 11);
+    }
+
     #[test]
     fn parse_xml_file() {
         let file = File::open("test/messages.xml").unwrap();
@@ -93,6 +148,9 @@ mod tests {
         assert_eq!(dictionary.classes.len(), 5);
     }
 
+    //==========================
+    // Test pprzlink tramsport
+    //==========================
     #[test]
     /// Decode a single message
     fn decode_message() {
@@ -113,8 +171,8 @@ mod tests {
     #[test]
     /// Decode 138 messages
     fn decode_messages() {
-    	let (buffer_of_messages, _) = initialize_vectors();
-    	
+        let (buffer_of_messages, _) = initialize_vectors();
+
         let mut rx = PprzTransport::new();
         let mut n_msg = 0;
 
@@ -161,7 +219,7 @@ mod tests {
     #[test]
     /// encode 128 messages and verify
     fn encode_messages() {
-    	let (buffer_of_messages, buffer_of_payloads) = initialize_vectors();
+        let (buffer_of_messages, buffer_of_payloads) = initialize_vectors();
 
         assert_eq!(buffer_of_payloads.len(), buffer_of_messages.len());
 
@@ -444,12 +502,12 @@ mod tests {
                  vec![0x99, 0x12, 0x1, 0x6, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                       0x0, 0x0, 0x19, 0x6a],
                  vec![0x99, 0x1a, 0x1, 0xa, 0x0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-                      0x0, 0x0, 0x0, 0x0, 0x9f, 0x40, 0x7d, 0x44, 0x0, 0x0, 0xc7, 0x1e],
+                      0x0, 0x0, 0x0, 0x0, 0x9f, 0x40, 0x7d, 0x44, 0x0, 0x0, 0xc7, 0x1e], // NAVIGATION
                  vec![0x99, 0x15, 0x1, 0xc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0xeb,
-                      0x1, 0x0, 0x0, 0x0, 0x0, 0xf, 0xd9],
+                      0x1, 0x0, 0x0, 0x0, 0x0, 0xf, 0xd9], // BATTERY
                  vec![0x99, 0x24, 0x1, 0x3b, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                       0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-                      0x0, 0x0, 0x0, 0x0, 0x0, 0x60, 0xe9],
+                      0x0, 0x0, 0x0, 0x0, 0x0, 0x60, 0xe9], // GPS LLA
                  vec![0x99, 0x26, 0x1, 0x10, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                       0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xaf, 0x44,
                       0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x41, 0xeb, 0xdf],

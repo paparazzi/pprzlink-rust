@@ -97,28 +97,65 @@ enum PprzMsgBaseType {
 
 impl fmt::Display for PprzMsgBaseType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut s = String::new();
         match *self {
-            PprzMsgBaseType::Float(v) => write!(f, "float: {}", v),
-            PprzMsgBaseType::FloatArr(ref v) => write!(f, "float vec: {:?}", v),
-            PprzMsgBaseType::Double(v) => write!(f, "double: {}", v),
-            PprzMsgBaseType::DoubleArr(ref v) => write!(f, "double vec: {:?}", v),
-            PprzMsgBaseType::Uint8(v) => write!(f, "Uint8: {}", v),
-            PprzMsgBaseType::Uint8Arr(ref v) => write!(f, "Uint8Arr: {:?}", v),
-            PprzMsgBaseType::Uint16(v) => write!(f, "Uint16: {}", v),
-            PprzMsgBaseType::Uint16Arr(ref v) => write!(f, "Uint16Arr: {:?}", v),
-            PprzMsgBaseType::Uint32(v) => write!(f, "Uint32: {}", v),
-            PprzMsgBaseType::Uint32Arr(ref v) => write!(f, "Uint32Arr: {:?}", v),
-            PprzMsgBaseType::Int8(v) => write!(f, "int8: {}", v),
-            PprzMsgBaseType::Int8Arr(ref v) => write!(f, "int8Arr: {:?}", v),
-            PprzMsgBaseType::Int16(v) => write!(f, "int16: {}", v),
-            PprzMsgBaseType::Int16Arr(ref v) => write!(f, "int16Arr: {:?}", v),
-            PprzMsgBaseType::Int32(v) => write!(f, "int32: {}", v),
-            PprzMsgBaseType::Int32Arr(ref v) => write!(f, "int32Arr: {:?}", v),
-            PprzMsgBaseType::Char(v) => write!(f, "Char: {}", v),
-            PprzMsgBaseType::CharArr(ref v) => write!(f, "CharArr: {:?}", v),
-            PprzMsgBaseType::String(ref v) => write!(f, "String: {}", v),
+            PprzMsgBaseType::Float(v) => s = format!("{}", v),
+            PprzMsgBaseType::Double(v) => s = format!("{}", v),
+            PprzMsgBaseType::Uint8(v) => s = format!("{}", v),
+            PprzMsgBaseType::Uint16(v) => s = format!("{}", v),
+            PprzMsgBaseType::Uint32(v) => s = format!("{}", v),
+            PprzMsgBaseType::Int8(v) => s = format!("{}", v),
+            PprzMsgBaseType::Int16(v) => s = format!("{}", v),
+            PprzMsgBaseType::Int32(v) => s = format!("{}", v),
+            PprzMsgBaseType::Char(v) => s = format!("{}", v),
+            PprzMsgBaseType::String(ref v) => s = format!("{}", v),
+            PprzMsgBaseType::FloatArr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::DoubleArr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Uint8Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Uint16Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Uint32Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Int8Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Int16Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::Int32Arr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
+            PprzMsgBaseType::CharArr(ref v) => {
+                for val in v {
+                    s = s + &format!(" {}", val);
+                }
+            }
         }
-
+        write!(f, "{}", s)
     }
 }
 
@@ -132,10 +169,9 @@ pub struct PprzField {
 
 impl fmt::Display for PprzField {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "name: {}, value: {}", self.name, self.value)
+        write!(f, "{}", self.value)
     }
 }
-
 
 /// Pprzlink message
 /// see https://wiki.paparazziuav.org/wiki/Messages_Format
@@ -151,6 +187,14 @@ pub struct PprzMessage {
     pub name: String,
 }
 
+extern crate byteorder;
+use std::io::Cursor;
+use self::byteorder::{LittleEndian, ReadBytesExt};
+use std::mem;
+
+use std::io::Write;
+
+
 impl PprzMessage {
     pub fn contains(&self, query: &str) -> bool {
         for field in &self.fields {
@@ -160,28 +204,336 @@ impl PprzMessage {
         }
         return false;
     }
+
+    pub fn new() -> PprzMessage {
+        PprzMessage {
+            protocol: PprzProtocolVersion::ProtocolV1,
+            source: 0, // SENDER_ID
+            destination: 0, // can be BROADCAST
+            component: 0,
+            version: PprzMessageVersion::MessagesV1, // maybe obsolete?
+            id: 0, // MSG_ID
+            fields: vec![],
+            name: String::new(),
+        }
+    }
+
+    /// Fill in the message with real data
+    /// payload: contains only message data
+    pub fn update(&mut self, payload: &[u8]) {
+        self.source = payload[0];
+        let mut idx = 2;
+
+        for field in &mut self.fields {
+            // check out of bounds condition
+            if idx > payload.len() {
+                panic!("Error in update: idx= {} > len={} !", idx, payload.len());
+            }
+
+            // match field values
+            match field.value {
+                PprzMsgBaseType::Uint8(_) => {
+                    field.value = PprzMsgBaseType::Uint8(payload[idx]);
+                    idx += 1;
+                }
+                PprzMsgBaseType::Uint16(_) => {
+                    let size = mem::size_of::<u16>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    match rdr.read_u16::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Uint16(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Uint16(0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Uint32(_) => {
+                    let size = mem::size_of::<u32>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    match rdr.read_u32::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Uint32(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Uint32(0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Int8(_) => {
+                    field.value = PprzMsgBaseType::Int8(payload[idx] as i8);
+                    idx += 1;
+                }
+                PprzMsgBaseType::Int16(_) => {
+                    let size = mem::size_of::<i16>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    match rdr.read_i16::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Int16(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Int16(0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Int32(_) => {
+                    let size = mem::size_of::<i32>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    match rdr.read_i32::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Int32(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Int32(0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Float(_) => {
+                    let size = mem::size_of::<f32>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    // TODO: stm32f4 is little endian, make as default?
+                    // or use network endiannes?
+                    match rdr.read_f32::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Float(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Float(0.0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Double(_) => {
+                    let size = mem::size_of::<f64>();
+                    let mut rdr = Cursor::new(&payload[idx..idx + size]);
+                    match rdr.read_f64::<LittleEndian>() {
+                        Ok(v) => field.value = PprzMsgBaseType::Double(v),
+                        Err(e) => {
+                            field.value = PprzMsgBaseType::Double(0.0);
+                            println!("Error updating message field {} {}: {}",
+                                     field.name,
+                                     field.value,
+                                     e);
+                        }
+                    };
+                    idx += size;
+                }
+                PprzMsgBaseType::Char(_) => {
+                    field.value = PprzMsgBaseType::Char(payload[idx] as char);
+                    idx += 1;
+                }
+                PprzMsgBaseType::CharArr(_) => {
+                    let len = payload[idx] as usize;
+                    idx += 1;
+
+                    let mut data = vec![];
+                    for k in idx..idx + len {
+                        data.push(payload[k] as char);
+                        idx += 1;
+                    }
+                    field.value = PprzMsgBaseType::CharArr(data);
+                }
+                PprzMsgBaseType::Uint8Arr(_) => {
+                    let len = payload[idx] as usize;
+                    idx += 1;
+
+                    let mut data = vec![];
+                    for k in idx..idx + len {
+                        data.push(payload[k]);
+                        idx += 1;
+                    }
+                    field.value = PprzMsgBaseType::Uint8Arr(data);
+                }
+                PprzMsgBaseType::Uint16Arr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<u16>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_u16::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::Uint16Arr(data);
+                }
+                PprzMsgBaseType::Uint32Arr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<u32>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_u32::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::Uint32Arr(data);
+                }
+                PprzMsgBaseType::Int8Arr(_) => {
+                    let len = payload[idx] as usize;
+                    idx += 1;
+
+                    let mut data = vec![];
+                    for k in idx..idx + len {
+                        data.push(payload[k] as i8);
+                        idx += 1;
+                    }
+                    field.value = PprzMsgBaseType::Int8Arr(data);
+                }
+                PprzMsgBaseType::Int16Arr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<i16>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_i16::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::Int16Arr(data);
+                }
+                PprzMsgBaseType::Int32Arr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<i32>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_i32::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::Int32Arr(data);
+                }
+                PprzMsgBaseType::FloatArr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<f32>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_f32::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::FloatArr(data);
+                }
+                PprzMsgBaseType::DoubleArr(_) => {
+                    let len = payload[idx] as usize; // length of the array
+                    let size = mem::size_of::<f64>(); // size of one element
+                    idx += 1; // increment index
+
+                    let mut data = vec![]; // init empty vector
+                    let end = idx + len * size;
+
+                    let mut rdr = Cursor::new(&payload[idx..end]);
+                    for _ in 0..len {
+                        match rdr.read_f64::<LittleEndian>() {
+                            Ok(v) => data.push(v),
+                            Err(e) => {
+                                println!("Error updating message field {} {}: {}",
+                                         field.name,
+                                         field.value,
+                                         e);
+                            }
+                        };
+                        idx += size;
+                    }
+                    field.value = PprzMsgBaseType::DoubleArr(data);
+                }
+                _ => println!("Unsupported data type"), // String (ignore for now)
+            }
+        }
+    }
+
+    pub fn to_string(&mut self) -> Option<String> {
+        let mut buf = Vec::new();
+        let _ = write!(&mut buf, "{}", self);
+        match String::from_utf8(buf) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                println!("Error converting msg to string: {}", e);
+                return None;
+            }
+        }
+    }
 }
 
 // TODO: use display for printing IVY compatible regexprs ?
 impl fmt::Display for PprzMessage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let _ = write!(
-            f,
-            "MESSAGE\nid: {}, name: {},
-               protocol: {}, source: {}, destinaton: {}, component: {}, version: {},
-               fields:",
-            self.id,
-            self.name,
-            self.protocol,
-            self.source,
-            self.destination,
-            self.component,
-            self.version
-        );
+        let mut s = format!("{} {}", self.source, self.name);
+
         for field in &self.fields {
-            let _ = write!(f, "{}", field);
+            s = s + &format!(" {}", field);
         }
-        write!(f, "\n")
+        write!(f, "{}", s)
     }
 }
 

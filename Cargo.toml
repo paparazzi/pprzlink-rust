@@ -13,3 +13,4 @@ categories = ["embedded", "parsing","parser-implementations"]
 [dependencies]
 xml-rs = "0.6"
 ivyrust = "0.1.1"
+byteorder = "1.1.0"
