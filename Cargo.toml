@@ -1,10 +1,10 @@
 [package]
 name = "pprzlink"
-version = "0.1.0"
-authors = ["Michal Podhradsky <michal.podhradsky@aggiemail.usu.edu>"]
+version = "0.2.0"
+authors = ["Michal Podhradsky <michal.podhradsky@galois.com>"]
 description = "Rust library for pprzlink"
 license = "GPL-3.0"
-documentation = "https://github.com/paparazzi/pprzlink-rust/README.md"
+documentation = "https://docs.rs/pprzlink/"
 homepage = "https://github.com/paparazzi/pprzlink-rust"
 repository = "https://github.com/paparazzi/pprzlink-rust"
 keywords = ["UAV", "pprzlink","paparazzi"]
