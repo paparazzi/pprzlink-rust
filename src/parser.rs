@@ -151,7 +151,7 @@ impl fmt::Display for PprzMsgBaseType {
             }
             PprzMsgBaseType::CharArr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {},", val);
+                    s = s + &format!("{}", val);
                 }
             }
         }
