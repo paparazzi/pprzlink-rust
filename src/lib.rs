@@ -6,7 +6,7 @@ extern crate ivyrust;
 mod tests {
     use super::transport::PprzTransport;
     use super::parser;
-    use super::parser::{PprzMsgClassID};
+    use super::parser::PprzMsgClassID;
     use std::fs::File;
 
 
@@ -17,9 +17,16 @@ mod tests {
     //==========================
     // Test pprzlink ivy
     //==========================
+    // this is retarded, but we have to subscribe to all messages and filter them,
+    // because we cant use msg.bind_to_ivy as would be super nice
+    fn desired_callback(data: Vec<String>) {
+        println!("Got a message! Should be NPS_POS_LLH");
+        println!("Data={:?}", data);
+    }
+
     #[test]
-    fn test_pprzlink_to_ivy() {
-        let (buffer_of_messages, _) = initialize_vectors();
+    fn test_ivy_to_pprzlink() {
+        // this test will bind callbacks to varius Ivy messages and then listen on thebus
         let dictionary = get_dictionary();
 
         ivyrust::ivy_init(String::from("RUST_IVY"), String::from("RUST_IVY Ready"));
@@ -34,7 +41,37 @@ mod tests {
         // sleep so we can finish initialization
         thread::sleep(time::Duration::from_millis(1000));
 
+        // find a message to be bound to IVY bus
+        let msg = dictionary.find_msg_by_name("NPS_POS_LLH").unwrap();
+
+        // lets bind a message
+        let _ = ivyrust::ivy_bind_msg(desired_callback, msg.to_ivy_regexpr());
+
+        thread::sleep(time::Duration::from_millis(10000));
+        // siply terminate
+        println!("Test sucessful, terminating");
+    }
+
+    ///  run with ivyprobe '(.*)'
+    #[test]
+    fn test_pprzlink_to_ivy() {
+        let (buffer_of_messages, _) = initialize_vectors();
+        let dictionary = get_dictionary();
+
+        ivyrust::ivy_init(String::from("RUST_IVY"), String::from("RUST_IVY Ready"));
+        ivyrust::ivy_start(None);
+
+        // spin the main loop
+        let _ = thread::spawn(move || if let Err(e) = ivyrust::ivy_main_loop() {
+                                  println!("Error in Ivy main loop: {}", e);
+                              } else {
+                                  println!("ivy main loop finished finished");
+                              });
+        // sleep so we can finish initialization
+        thread::sleep(time::Duration::from_millis(1000));
+
         for message in buffer_of_messages {
+            let mut payload = message.clone();
             let mut rx = PprzTransport::new();
             let mut msg_available = false;
             for b in message {
@@ -45,16 +82,30 @@ mod tests {
             }
             assert!(msg_available);
 
+
             let name = dictionary
                 .get_msg_name(PprzMsgClassID::Telemetry, rx.buf[1])
                 .unwrap();
-
             let mut msg = dictionary.find_msg_by_name(&name).unwrap();
+
+            // update message fields with real values
             msg.update(&rx.buf);
 
-            ivyrust::ivy_send_msg(msg.to_string());
-        }
+            // send the message
+            ivyrust::ivy_send_msg(msg.to_string().unwrap());
 
+            // now get the byte representation of the payload
+            let msg_as_bytes: Vec<u8> = msg.to_bytes();
+
+			// drain first two bytes and the last two bytes (transport header and checksum)
+			let len = payload.len();
+			let payload: Vec<u8> = payload.drain(2..len-2).collect();
+			
+			println!("MSG: {}",msg);
+			
+            assert_eq!(msg_as_bytes, payload);
+        }
+        
         // sleep a bit so we can finish sending messages
         thread::sleep(time::Duration::from_millis(1000));
         ivyrust::ivy_stop();

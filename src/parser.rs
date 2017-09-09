@@ -10,7 +10,7 @@ use self::xml::attribute::OwnedAttribute;
 
 /// two versions of pprzlink protocol
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-enum PprzProtocolVersion {
+pub enum PprzProtocolVersion {
     ProtocolV1,
     // ProtocolV2,
 }
@@ -29,7 +29,7 @@ impl fmt::Display for PprzProtocolVersion {
 
 /// only one version of the messages for now
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-enum PprzMessageVersion {
+pub enum PprzMessageVersion {
     MessagesV1,
 }
 
@@ -111,47 +111,47 @@ impl fmt::Display for PprzMsgBaseType {
             PprzMsgBaseType::String(ref v) => s = format!("{}", v),
             PprzMsgBaseType::FloatArr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::DoubleArr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Uint8Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Uint16Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Uint32Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Int8Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Int16Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::Int32Arr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!("{},", val);
                 }
             }
             PprzMsgBaseType::CharArr(ref v) => {
                 for val in v {
-                    s = s + &format!(" {}", val);
+                    s = s + &format!(" {},", val);
                 }
             }
         }
@@ -175,27 +175,44 @@ impl fmt::Display for PprzField {
 
 /// Pprzlink message
 /// see https://wiki.paparazziuav.org/wiki/Messages_Format
+/// and https://github.com/paparazzi/pprzlink
+///
+/// The message doesn't contain any headers/sync or checksum,
+/// it is purely representing the payload of the pprzlink message
+///
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct PprzMessage {
-    protocol: PprzProtocolVersion,
-    source: u8, // SENDER_ID
-    destination: u8, // can be BROADCAST
-    component: u8,
-    version: PprzMessageVersion, // maybe obsolete?
-    id: u8, // MSG_ID
-    fields: Vec<PprzField>,
+    /// specifies message protocol (currently only v.1.0 supported)
+    pub protocol: PprzProtocolVersion,
+    /// the `SENDER_ID` of the message
+    pub source: u8,
+    /// the `DESTINATION` of the message (pprzlink v.2.0 only)
+    pub destination: u8,
+    /// the message class (`CLASS` ID), can be unknown
+    pub class: Option<PprzMsgClassID>,
+    /// the `COMPONENT` ID (pprzlink v.2.0 only)
+    pub component: u8,
+    /// currently only v.1.0 is supported
+    pub version: PprzMessageVersion,
+    /// the `MSG_ID` in given message class
+    pub id: u8,
+    /// the vector of message fields
+    pub fields: Vec<PprzField>,
+    /// the message name, e.g. `WP_MOVED`
     pub name: String,
 }
 
 extern crate byteorder;
 use std::io::Cursor;
-use self::byteorder::{LittleEndian, ReadBytesExt};
+use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::mem;
 
 use std::io::Write;
 
 
+
 impl PprzMessage {
+    /// Find whether one of the message fields contains `query`
     pub fn contains(&self, query: &str) -> bool {
         for field in &self.fields {
             if field.name == query {
@@ -205,6 +222,8 @@ impl PprzMessage {
         return false;
     }
 
+    /// Create a new empty message, all fields set to zero,
+    /// all vectors are empty
     pub fn new() -> PprzMessage {
         PprzMessage {
             protocol: PprzProtocolVersion::ProtocolV1,
@@ -215,11 +234,19 @@ impl PprzMessage {
             id: 0, // MSG_ID
             fields: vec![],
             name: String::new(),
+            class: None,
         }
     }
 
-    /// Fill in the message with real data
-    /// payload: contains only message data
+    /// Fill in the message with real data from the `payload`.
+    /// Payload is expected to be in the format of:
+    ///
+    /// ```ignore
+    /// payload[0] SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
+    /// ```
+    ///
     pub fn update(&mut self, payload: &[u8]) {
         self.source = payload[0];
         let mut idx = 2;
@@ -512,7 +539,9 @@ impl PprzMessage {
         }
     }
 
-    pub fn to_string(&mut self) -> Option<String> {
+    /// Return a string representation of the message,
+    /// useful for posting the message into the IVY bus
+    pub fn to_string(&self) -> Option<String> {
         let mut buf = Vec::new();
         let _ = write!(&mut buf, "{}", self);
         match String::from_utf8(buf) {
@@ -523,9 +552,210 @@ impl PprzMessage {
             }
         }
     }
+
+    /// Return a rexepr representing the message,
+    /// useful for binding a particular message callback.
+    ///
+    /// The format is:
+    ///
+    /// * source (SENDER_ID)
+    /// * message name
+    /// * fields
+    ///
+    /// For example a `WP_MOVED` message that is defined as
+    ///
+    /// ```xml,ignore
+    ///<message name="WP_MOVED" id="35">
+    ///	<description>
+    /// 	Waypoint with id wp_id has been updated/moved to the specified UTM coordinates.
+    ///	</description>
+    /// 	<field name="wp_id" type="uint8"/>
+    ///  	<field name="utm_east" type="float" unit="m"/>
+    /// 	<field name="utm_north" type="float" unit="m"/>
+    ///  	<field name="alt" type="float" unit="m">Height above Mean Sea Level (geoid)</field>
+    ///  	<field name="utm_zone" type="uint8"/>
+    ///</message>
+    /// ```
+    ///
+    /// will be represented as `^(\\S*) WP_MOVED (\\S*) (\\S*) (\\S*) (\\S*) (\\S*)`
+    ///
+    pub fn to_ivy_regexpr(&self) -> String {
+        // const char* WP_MOVED = "^(\\S*) WP_MOVED (\\S*) (\\S*) (\\S*) (\\S*) (\\S*)";
+        let regexpr = String::from("(\\S*)");
+        let mut s: String = format!("^{} {}", regexpr, self.name);
+
+
+        for field in &self.fields {
+            match field.value {
+                PprzMsgBaseType::Float(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Double(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Uint8(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Uint16(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Uint32(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Int8(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Int16(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Int32(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::Char(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::String(_) => s += &format!(" {}", regexpr),
+                PprzMsgBaseType::FloatArr(ref v) => {
+                    s += &format!("{}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::DoubleArr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Uint8Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Uint16Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Uint32Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Int8Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Int16Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::Int32Arr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+                PprzMsgBaseType::CharArr(ref v) => {
+                    s += &format!(" {}", regexpr);
+                    for _ in 0..v.len() {
+                        s += &format!(" {}", regexpr);
+                    }
+                }
+            }
+        }
+        s
+    }
+
+    /// Return a byte representation of the message and its fields,
+    /// in the format of:
+    ///
+    /// ```ignore
+    /// payload[0] SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
+    /// ```
+    ///
+    /// Note that the byte order is LittleEndian!
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = vec![];
+        
+        buf.push(self.source); // sender ID
+        buf.push(self.id); // message ID
+        
+        // TODO: additional fields in case of v2.0 message
+        // explore having PprzMessage as a Trait or TraitObject?
+
+        for field in &self.fields {
+            match field.value {
+                PprzMsgBaseType::Uint8(v) => buf.push(v),
+                PprzMsgBaseType::Int8(v) => buf.push(v as u8),
+                PprzMsgBaseType::Char(v) => buf.push(v as u8),
+                PprzMsgBaseType::Uint16(v) => buf.write_u16::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Int16(v) => buf.write_i16::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Uint32(v) => buf.write_u32::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Int32(v) => buf.write_i32::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Float(v) => buf.write_f32::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Double(v) => buf.write_f64::<LittleEndian>(v).unwrap(),
+                PprzMsgBaseType::Uint8Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.push(*byte);
+                    }
+                }
+                PprzMsgBaseType::Int8Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.push(*byte as u8);
+                    }
+                }
+                PprzMsgBaseType::CharArr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.push(*byte as u8);
+                    }
+                }
+                PprzMsgBaseType::Uint16Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_u16::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::Int16Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_i16::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::Uint32Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_u32::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::Int32Arr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_i32::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::FloatArr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_f32::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::DoubleArr(ref v) => {
+                	buf.push(v.len() as u8);
+                    for byte in v {
+                        buf.write_f64::<LittleEndian>(*byte).unwrap();
+                    }
+                }
+                PprzMsgBaseType::String(_) => panic!("Unsupported type: String !"), // panic for now
+            }
+        }
+        buf
+    }
+    
+    
+    /// Set the sourc (`SENDER_ID`) of the message
+    /// Important when sending messages from the ground to the UAV 
+    pub fn set_sender(&mut self, sender_id: u8) {
+    	self.source = sender_id;
+    }
 }
 
-// TODO: use display for printing IVY compatible regexprs ?
+/// Display message in IVY bus compatible format,
+/// see `to_string()`
 impl fmt::Display for PprzMessage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut s = format!("{} {}", self.source, self.name);
@@ -685,6 +915,7 @@ pub fn build_dictionary(file: File) -> PprzDictionary {
     let file = BufReader::new(file);
     let mut dictionary = PprzDictionary { classes: vec![] };
     let parser = EventReader::new(file);
+    let mut current_class = None;
     for e in parser {
         match e {
             Ok(XmlEvent::StartElement { name, attributes, .. }) => {
@@ -705,6 +936,9 @@ pub fn build_dictionary(file: File) -> PprzDictionary {
                             "intermcu" => PprzMsgClassID::Intermcu,
                             _ => panic!("Unknown message class"),
                         };
+
+                        // save the current class
+                        current_class = Some(class_name);
 
                         // check if we have the message class already
                         if dictionary.contains(class_name) {
@@ -748,6 +982,7 @@ pub fn build_dictionary(file: File) -> PprzDictionary {
                                 fields: vec![],
                                 name: msg_name.clone(),
                                 id: msg_id,
+                                class: current_class,
                             };
                             last_class.messages.push(msg);
                         }
