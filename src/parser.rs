@@ -7,6 +7,7 @@ use std::io::BufReader;
 use std::fmt; // Import `fmt`
 use self::xml::reader::{EventReader, XmlEvent};
 use self::xml::attribute::OwnedAttribute;
+use std::marker::Send;
 
 /// two versions of pprzlink protocol
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -766,6 +767,9 @@ impl fmt::Display for PprzMessage {
         write!(f, "{}", s)
     }
 }
+
+unsafe impl Send for PprzMessage {}
+unsafe impl Sync for PprzMessage {}
 
 
 

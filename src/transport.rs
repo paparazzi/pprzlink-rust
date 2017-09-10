@@ -41,6 +41,10 @@ impl PprzTransport {
         self.length = 0;
         self.state = PprzParserState::WaitSTX;
     }
+    
+    pub fn get_message_length(&self) -> usize {
+    	self.length as usize
+    }
 
     /// parse new byte, return True when a new full message is available
     pub fn parse_byte(&mut self, b: u8) -> bool {
@@ -109,5 +113,6 @@ impl PprzTransport {
         let (ck_a, ck_b) = self.calculate_checksum();
         self.buf.push(ck_a);
         self.buf.push(ck_b);
+        self.length = self.buf.len() as u8;
     }
 }
