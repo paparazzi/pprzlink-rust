@@ -73,7 +73,7 @@ impl Clone for PprzMsgClassID {
 
 /// Values of the each message field
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-enum PprzMsgBaseType {
+pub enum PprzMsgBaseType {
     Float(f32),
     FloatArr(Vec<f32>),
     Double(f64),
@@ -163,8 +163,8 @@ impl fmt::Display for PprzMsgBaseType {
 /// each field has a name and a type
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct PprzField {
-    name: String,
-    value: PprzMsgBaseType,
+    pub name: String,
+    pub value: PprzMsgBaseType,
 }
 
 impl fmt::Display for PprzField {
