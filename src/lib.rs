@@ -18,8 +18,6 @@ mod tests {
     //==========================
     // Test pprzlink ivy
     //==========================
-    // this is retarded, but we have to subscribe to all messages and filter them,
-    // because we cant use msg.bind_to_ivy as would be super nice
     fn desired_callback(data: Vec<String>) {
         println!("Got a message! Should be NPS_POS_LLH");
         println!("Data={:?}", data);

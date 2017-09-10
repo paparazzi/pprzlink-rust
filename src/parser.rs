@@ -7,10 +7,9 @@ use std::io::BufReader;
 use std::fmt; // Import `fmt`
 use self::xml::reader::{EventReader, XmlEvent};
 use self::xml::attribute::OwnedAttribute;
-use std::marker::Send;
 
 /// two versions of pprzlink protocol
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum PprzProtocolVersion {
     ProtocolV1,
     // ProtocolV2,
@@ -29,7 +28,7 @@ impl fmt::Display for PprzProtocolVersion {
 
 
 /// only one version of the messages for now
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum PprzMessageVersion {
     MessagesV1,
 }
@@ -236,6 +235,160 @@ impl PprzMessage {
             fields: vec![],
             name: String::new(),
             class: None,
+        }
+    }
+
+    pub fn update_from_string(&mut self, payload: &Vec<&str>) {
+        let mut idx = 2;
+
+        for field in &mut self.fields {
+            match field.value {
+                PprzMsgBaseType::Uint8(_) => {
+                    field.value = PprzMsgBaseType::Uint8(payload[idx].parse::<u8>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Uint16(_) => {
+                    field.value = PprzMsgBaseType::Uint16(payload[idx].parse::<u16>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Uint32(_) => {
+                    field.value = PprzMsgBaseType::Uint32(payload[idx].parse::<u32>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Int8(_) => {
+                    field.value = PprzMsgBaseType::Int8(payload[idx].parse::<i8>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Int16(_) => {
+                    field.value = PprzMsgBaseType::Int16(payload[idx].parse::<i16>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Int32(_) => {
+                    field.value = PprzMsgBaseType::Int32(payload[idx].parse::<i32>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Float(_) => {
+                    field.value = PprzMsgBaseType::Float(payload[idx].parse::<f32>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Double(_) => {
+                    field.value = PprzMsgBaseType::Double(payload[idx].parse::<f64>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::Char(_) => {
+                    field.value = PprzMsgBaseType::Char(payload[idx].parse::<char>().unwrap());
+                    idx += 1;
+                }
+                PprzMsgBaseType::CharArr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<char>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::CharArr(data);
+                }
+                PprzMsgBaseType::Uint8Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<u8>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Uint8Arr(data);
+                }
+                PprzMsgBaseType::Uint16Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<u16>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Uint16Arr(data);
+                }
+                PprzMsgBaseType::Uint32Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<u32>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Uint32Arr(data);
+                }
+                PprzMsgBaseType::Int8Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<i8>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Int8Arr(data);
+                }
+                PprzMsgBaseType::Int16Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<i16>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Int16Arr(data);
+                }
+                PprzMsgBaseType::Int32Arr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<i32>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::Int32Arr(data);
+                }
+                PprzMsgBaseType::FloatArr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<f32>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::FloatArr(data);
+                }
+                PprzMsgBaseType::DoubleArr(_) => {
+                    // Ivy message doesnt have the `len` attribute
+                    // it looks like '1 COMMANDS 0,0,0,0,0'
+                    // We have to assume that the array is the last field, thus the remaining of
+                    // the payload is for the array
+                    // We also have to assume that this is the last field in the `fields`
+                    let mut data = vec![];
+                    for k in idx..payload.len() {
+                        data.push(payload[k].parse::<f64>().unwrap());
+                    }
+                    field.value = PprzMsgBaseType::DoubleArr(data);
+                }
+                PprzMsgBaseType::String(_) => panic!("String is a currently unsuported type"),
+            }
         }
     }
 
@@ -535,7 +688,7 @@ impl PprzMessage {
                     }
                     field.value = PprzMsgBaseType::DoubleArr(data);
                 }
-                _ => println!("Unsupported data type"), // String (ignore for now)
+               PprzMsgBaseType::String(_) => println!("Unsupported data type: String"), // String (ignore for now)
             }
         }
     }
@@ -669,10 +822,10 @@ impl PprzMessage {
     /// Note that the byte order is LittleEndian!
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = vec![];
-        
+
         buf.push(self.source); // sender ID
         buf.push(self.id); // message ID
-        
+
         // TODO: additional fields in case of v2.0 message
         // explore having PprzMessage as a Trait or TraitObject?
 
@@ -688,55 +841,55 @@ impl PprzMessage {
                 PprzMsgBaseType::Float(v) => buf.write_f32::<LittleEndian>(v).unwrap(),
                 PprzMsgBaseType::Double(v) => buf.write_f64::<LittleEndian>(v).unwrap(),
                 PprzMsgBaseType::Uint8Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.push(*byte);
                     }
                 }
                 PprzMsgBaseType::Int8Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.push(*byte as u8);
                     }
                 }
                 PprzMsgBaseType::CharArr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.push(*byte as u8);
                     }
                 }
                 PprzMsgBaseType::Uint16Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_u16::<LittleEndian>(*byte).unwrap();
                     }
                 }
                 PprzMsgBaseType::Int16Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_i16::<LittleEndian>(*byte).unwrap();
                     }
                 }
                 PprzMsgBaseType::Uint32Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_u32::<LittleEndian>(*byte).unwrap();
                     }
                 }
                 PprzMsgBaseType::Int32Arr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_i32::<LittleEndian>(*byte).unwrap();
                     }
                 }
                 PprzMsgBaseType::FloatArr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_f32::<LittleEndian>(*byte).unwrap();
                     }
                 }
                 PprzMsgBaseType::DoubleArr(ref v) => {
-                	buf.push(v.len() as u8);
+                    buf.push(v.len() as u8);
                     for byte in v {
                         buf.write_f64::<LittleEndian>(*byte).unwrap();
                     }
@@ -746,12 +899,12 @@ impl PprzMessage {
         }
         buf
     }
-    
-    
+
+
     /// Set the sourc (`SENDER_ID`) of the message
-    /// Important when sending messages from the ground to the UAV 
+    /// Important when sending messages from the ground to the UAV
     pub fn set_sender(&mut self, sender_id: u8) {
-    	self.source = sender_id;
+        self.source = sender_id;
     }
 }
 
@@ -767,11 +920,6 @@ impl fmt::Display for PprzMessage {
         write!(f, "{}", s)
     }
 }
-
-unsafe impl Send for PprzMessage {}
-unsafe impl Sync for PprzMessage {}
-
-
 
 /// each class has a vector of messages
 #[derive(Debug, Clone)]
@@ -811,6 +959,7 @@ pub struct PprzDictionary {
     pub classes: Vec<PprzMsgClass>,
 }
 
+
 impl PprzDictionary {
     pub fn contains(&self, query: PprzMsgClassID) -> bool {
         for class in &self.classes {
@@ -832,8 +981,8 @@ impl PprzDictionary {
         None
     }
 
-    pub fn get_msgs(self, msg_class_id: PprzMsgClassID) -> Option<PprzMsgClass> {
-        for class in self.classes {
+    pub fn get_msgs(&self, msg_class_id: PprzMsgClassID) -> Option<PprzMsgClass> {
+        for class in &self.classes {
             if class.id == msg_class_id {
                 return Some(class.clone());
             }
