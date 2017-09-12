@@ -1,6 +1,6 @@
 [package]
 name = "pprzlink"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Michal Podhradsky <michal.podhradsky@galois.com>"]
 description = "Rust library for pprzlink"
 license = "GPL-3.0"
