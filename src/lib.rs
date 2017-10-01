@@ -1,6 +1,7 @@
 pub mod transport;
 pub mod parser;
 
+// TODO: remove once all tests are done
 extern crate ivyrust;
 
 #[cfg(test)]

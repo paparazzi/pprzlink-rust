@@ -41,9 +41,9 @@ impl PprzTransport {
         self.length = 0;
         self.state = PprzParserState::WaitSTX;
     }
-    
+
     pub fn get_message_length(&self) -> usize {
-    	self.length as usize
+        self.length as usize
     }
 
     /// parse new byte, return True when a new full message is available
@@ -58,10 +58,18 @@ impl PprzTransport {
                 }
             }
             PprzParserState::GotSTX => {
-                self.length = b - 4;
-                self.ck_a = b;
-                self.ck_b = b;
-                self.state = PprzParserState::GotLength;
+                // minimal size of a message is 6
+                if b >= 6 {
+                	self.length = b - 4;
+                    self.ck_a = b;
+                    self.ck_b = b;
+                    self.state = PprzParserState::GotLength;
+
+                } else {
+                    self.hdr_err += 1;
+                    self.state = PprzParserState::WaitSTX;
+                }
+
             }
             PprzParserState::GotLength => {
                 self.buf.push(b);
@@ -81,6 +89,7 @@ impl PprzTransport {
             PprzParserState::GotCRC1 => {
                 self.state = PprzParserState::WaitSTX;
                 if self.ck_b == b {
+                    // if crypto, handle crypto here
                     return true;
                 }
             }
