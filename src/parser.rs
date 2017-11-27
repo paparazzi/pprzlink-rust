@@ -285,9 +285,20 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // For character array, when parsing from Ivy bus message string
+                    // we want to remove all {'\','"'} characters that cause problem
+                    // for OCaml ivy parser (for example '\"v5.13_devel-85-gddc8510-dirty\"'
+                    // have to become 'v5.13_devel-85-gddc8510-dirty' 
                     let mut data = vec![];
-                    for k in idx..payload.len() {
-                        data.push(payload[k].parse::<char>().unwrap());
+                    let mychararray = payload[idx].as_bytes();
+                    for k in 0..mychararray.len() {
+                    	let c = mychararray[k] as char;
+                    	if c == '\\' || c == '\"' {
+                    		// skip this character
+                    		continue;
+                    	}
+                    	data.push(c);
                     }
                     field.value = PprzMsgBaseType::CharArr(data);
                 }

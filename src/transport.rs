@@ -15,7 +15,7 @@ enum PprzParserState {
 /// can be used for for tx and rx
 pub struct PprzTransport {
     state: PprzParserState,
-    length: u8,
+    pub length: u8,
     pub buf: Vec<u8>,
     ck_a: u8,
     ck_b: u8,
@@ -53,6 +53,7 @@ impl PprzTransport {
                 if b == PPRZ_STX {
                     self.reset();
                     self.state = PprzParserState::GotSTX;
+                    //println!("Got STX");
                 } else {
                     self.hdr_err += 1;
                 }
@@ -64,6 +65,7 @@ impl PprzTransport {
                     self.ck_a = b;
                     self.ck_b = b;
                     self.state = PprzParserState::GotLength;
+                    //println!("Got length of {}",b);
 
                 } else {
                     self.hdr_err += 1;
@@ -73,9 +75,11 @@ impl PprzTransport {
             }
             PprzParserState::GotLength => {
                 self.buf.push(b);
+                //println!("byte: 0x{:x}",b);
                 self.ck_a = self.ck_a.wrapping_add(b);
                 self.ck_b = self.ck_b.wrapping_add(self.ck_a);
                 if self.buf.len() == self.length as usize {
+                	//println!("Got payload");
                     self.state = PprzParserState::GotPayload;
                 }
             }
@@ -83,15 +87,18 @@ impl PprzTransport {
                 if self.ck_a == b {
                     self.state = PprzParserState::GotCRC1;
                 } else {
+                	//println!("self.ck_a = 0x{:x}, b=0x{:x}",self.ck_a,b);
                     self.state = PprzParserState::WaitSTX;
                 }
             }
             PprzParserState::GotCRC1 => {
                 self.state = PprzParserState::WaitSTX;
+                //println!("Got checksum");
                 if self.ck_b == b {
-                    // if crypto, handle crypto here
+                    //println!("Checksum ok");
                     return true;
                 }
+                //println!("self.ck_b = 0x{:x}, b=0x{:x}",self.ck_b,b);
             }
         }
         return false;

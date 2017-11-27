@@ -48,7 +48,7 @@ mod tests {
         let _ = ivyrust::ivy_bind_msg(desired_callback, msg.to_ivy_regexpr());
 
         thread::sleep(time::Duration::from_millis(10000));
-        // siply terminate
+        // simply terminate
         println!("Test sucessful, terminating");
     }
 
