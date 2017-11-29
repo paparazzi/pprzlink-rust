@@ -239,6 +239,11 @@ impl PprzMessage {
     }
 
     pub fn update_from_string(&mut self, payload: &Vec<&str>) {
+    	if payload.len() <= 2 {
+    		// message contains no payload (only SENDER and MSG_NAME)
+    		return;
+    	}
+    	
         let mut idx = 2;
 
         for field in &mut self.fields {
