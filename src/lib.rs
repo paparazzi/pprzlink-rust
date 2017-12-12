@@ -116,7 +116,7 @@ mod tests {
     //==========================
     fn get_dictionary() -> parser::PprzDictionary {
         let file = File::open("test/messages.xml").unwrap();
-        let dictionary = parser::build_dictionary(file);
+        let dictionary = parser::build_dictionary(file, parser::PprzProtocolVersion::ProtocolV1);
         assert_eq!(dictionary.classes.len(), 5);
         dictionary
     }
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn parse_xml_file() {
         let file = File::open("test/messages.xml").unwrap();
-        let dictionary = parser::build_dictionary(file);
+        let dictionary = parser::build_dictionary(file, parser::PprzProtocolVersion::ProtocolV1);
         // 5 classes in messages.xml
         assert_eq!(dictionary.classes.len(), 5);
     }
