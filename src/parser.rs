@@ -8,6 +8,16 @@ use std::fmt;
 use self::xml::reader::{EventReader, XmlEvent};
 use self::xml::attribute::OwnedAttribute;
 
+/// define constants
+const V1_SENDER_ID: usize  = 0;
+const V1_MSG_ID: usize  = 1;
+
+const V2_SENDER_ID: usize  = 0;
+const V2_DESTINATION: usize  = 1;
+const V2_CLASS_COMPONENT: usize  = 2;
+const V2_MSG_ID: usize  = 3;
+
+
 /// two versions of pprzlink protocol
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum PprzProtocolVersion {
@@ -223,6 +233,18 @@ impl PprzMessage {
         }
         return false;
     }
+
+	/// return byte with message ID
+	pub fn get_msg_id_from_buf(buf: &[u8], version: PprzProtocolVersion) -> u8 {
+		match version {
+			PprzProtocolVersion::ProtocolV1 => {
+				buf[V1_MSG_ID]
+			}
+			PprzProtocolVersion::ProtocolV2 => {
+				buf[V2_MSG_ID]
+			}
+		}
+	}
 
     /// Create a new empty message, all fields set to zero,
     /// all vectors are empty
@@ -1058,10 +1080,18 @@ impl fmt::Display for PprzMsgClass {
 #[derive(Debug)]
 pub struct PprzDictionary {
     pub classes: Vec<PprzMsgClass>,
+    pub protocol: PprzProtocolVersion,
 }
 
 
 impl PprzDictionary {
+	pub fn new(pprzlink_version: PprzProtocolVersion) -> PprzDictionary {
+		PprzDictionary {
+			classes: vec![],
+			protocol: pprzlink_version,
+		}
+	}
+
     pub fn contains(&self, query: PprzMsgClassID) -> bool {
         for class in &self.classes {
             if class.id == query {
@@ -1167,7 +1197,7 @@ fn has_attribute(attributes: &Vec<OwnedAttribute>, value: &str) -> (bool, usize)
 
 pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> PprzDictionary {
     let file = BufReader::new(file);
-    let mut dictionary = PprzDictionary { classes: vec![] };
+    let mut dictionary = PprzDictionary::new(pprzlink_version);
     let parser = EventReader::new(file);
     let mut current_class = PprzMsgClassID::Unknown;
     for e in parser {
