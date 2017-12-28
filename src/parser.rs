@@ -4,7 +4,7 @@
 extern crate xml;
 use std::fs::File;
 use std::io::BufReader;
-use std::fmt; // Import `fmt`
+use std::fmt;
 use self::xml::reader::{EventReader, XmlEvent};
 use self::xml::attribute::OwnedAttribute;
 
@@ -12,14 +12,14 @@ use self::xml::attribute::OwnedAttribute;
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
 pub enum PprzProtocolVersion {
     ProtocolV1,
-    // ProtocolV2,
+    ProtocolV2,
 }
 
 impl fmt::Display for PprzProtocolVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {
             PprzProtocolVersion::ProtocolV1 => String::from("v1.0"),
-            //PprzProtocolVersion::ProtocolV2 => String::from("v2.0"),
+            PprzProtocolVersion::ProtocolV2 => String::from("v2.0"),
         };
         write!(f, "{}", s)
     }
@@ -45,16 +45,18 @@ impl fmt::Display for PprzMessageVersion {
 /// ID of all message classes
 #[derive(Debug, Copy, PartialEq, PartialOrd)]
 pub enum PprzMsgClassID {
-    Telemetry,
-    Datalink,
-    Ground,
-    Alert,
-    Intermcu,
+	Unknown = 0,
+    Telemetry = 1,
+    Datalink = 2,
+    Ground = 3,
+    Alert = 4,
+    Intermcu = 5,
 }
 
 impl fmt::Display for PprzMsgClassID {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = match *self {
+        	PprzMsgClassID::Unknown => String::from("Unknown"),
             PprzMsgClassID::Telemetry => String::from("Telemetry"),
             PprzMsgClassID::Datalink => String::from("Datalink"),
             PprzMsgClassID::Ground => String::from("Ground"),
@@ -90,7 +92,7 @@ pub enum PprzMsgBaseType {
     Int16Arr(Vec<i16>),
     Int32(i32),
     Int32Arr(Vec<i32>),
-    Char(char), // maybe u8?
+    Char(char),
     CharArr(Vec<char>),
     String(String),
 }
@@ -182,16 +184,16 @@ impl fmt::Display for PprzField {
 ///
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct PprzMessage {
-    /// specifies message protocol (currently only v.1.0 supported)
+    /// specifies message protocol
     pub protocol: PprzProtocolVersion,
     /// the `SENDER_ID` of the message
     pub source: u8,
     /// the `DESTINATION` of the message (pprzlink v.2.0 only)
     pub destination: u8,
-    /// the message class (`CLASS` ID), can be unknown
-    pub class: Option<PprzMsgClassID>,
+    /// the message class (`CLASS` ID), can be unknown (pprzlink v.2.0 only)
+    pub class: PprzMsgClassID,
     /// the `COMPONENT` ID (pprzlink v.2.0 only)
-    pub component: u8,
+    pub component: u8, 
     /// currently only v.1.0 is supported
     pub version: PprzMessageVersion,
     /// the `MSG_ID` in given message class
@@ -226,25 +228,50 @@ impl PprzMessage {
     /// all vectors are empty
     pub fn new() -> PprzMessage {
         PprzMessage {
-            protocol: PprzProtocolVersion::ProtocolV1,
+            protocol: PprzProtocolVersion::ProtocolV2,
             source: 0, // SENDER_ID
             destination: 0, // can be BROADCAST
             component: 0,
-            version: PprzMessageVersion::MessagesV1, // maybe obsolete?
+            version: PprzMessageVersion::MessagesV1,
             id: 0, // MSG_ID
             fields: vec![],
             name: String::new(),
-            class: None,
+            class: PprzMsgClassID::Unknown,
         }
     }
 
+	/// Message bytes
+	/// Pprzlink 1.0
+	/// 0 SENDER_ID
+    /// 1 MSG_ID
+    /// 2 MSG_PAYLOAD
+	///
+	///
+	/// Pprzlink 2.0
+	/// 0 SOURCE (~sender_ID)
+    /// 1 DESTINATION (can be a broadcast ID)
+    /// 2 CLASS/COMPONENT
+    /// 3 MSG_ID
+    /// 4 MSG_PAYLOAD
+    ///
     pub fn update_from_string(&mut self, payload: &Vec<&str>) {
-    	if payload.len() <= 2 {
-    		// message contains no payload (only SENDER and MSG_NAME)
-    		return;
+    	let mut idx;
+    	match self.protocol {
+    		PprzProtocolVersion::ProtocolV1 => {
+    			if payload.len() <= 2 {
+			    	// message contains no payload (only SENDER and MSG_NAME)
+		    		return;
+		    	}
+	   			idx = 2;
+    		}
+    		PprzProtocolVersion::ProtocolV2 => {
+    			if payload.len() <= 4 {
+			    	// message contains no payload (only SENDER and MSG_NAME)
+		    		return;
+		    	}
+    			idx = 4;
+    		}
     	}
-    	
-        let mut idx = 2;
 
         for field in &mut self.fields {
             match field.value {
@@ -411,15 +438,33 @@ impl PprzMessage {
     /// Fill in the message with real data from the `payload`.
     /// Payload is expected to be in the format of:
     ///
+    /// Pprzlink 1.0
     /// ```ignore
     /// payload[0] SENDER_ID
     /// payload[1] MSG_ID
     /// payload[2-end] MSG_PAYLOAD
     /// ```
     ///
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// 
     pub fn update(&mut self, payload: &[u8]) {
         self.source = payload[0];
-        let mut idx = 2;
+        let mut idx;
+        match self.protocol {
+        	PprzProtocolVersion::ProtocolV1 => {
+        		idx = 2;
+        	}
+        	PprzProtocolVersion::ProtocolV2 => {
+        		idx = 4;
+        	}
+        }
 
         for field in &mut self.fields {
             // check out of bounds condition
@@ -750,10 +795,8 @@ impl PprzMessage {
     /// will be represented as `^(\\S*) WP_MOVED (\\S*) (\\S*) (\\S*) (\\S*) (\\S*)`
     ///
     pub fn to_ivy_regexpr(&self) -> String {
-        // const char* WP_MOVED = "^(\\S*) WP_MOVED (\\S*) (\\S*) (\\S*) (\\S*) (\\S*)";
         let regexpr = String::from("(\\S*)");
         let mut s: String = format!("^{} {}", regexpr, self.name);
-
 
         for field in &self.fields {
             match field.value {
@@ -829,21 +872,40 @@ impl PprzMessage {
     /// Return a byte representation of the message and its fields,
     /// in the format of:
     ///
+    /// Pprzlink 1.0
     /// ```ignore
     /// payload[0] SENDER_ID
     /// payload[1] MSG_ID
     /// payload[2-end] MSG_PAYLOAD
     /// ```
     ///
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    ///
     /// Note that the byte order is LittleEndian!
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = vec![];
-
-        buf.push(self.source); // sender ID
-        buf.push(self.id); // message ID
-
-        // TODO: additional fields in case of v2.0 message
-        // explore having PprzMessage as a Trait or TraitObject?
+        
+        match self.protocol {
+        	PprzProtocolVersion::ProtocolV1 => {
+		        buf.push(self.source); // sender ID
+		        buf.push(self.id); // message ID		
+        	}
+        	PprzProtocolVersion::ProtocolV2 => {
+        		buf.push(self.source); // sender ID
+		        buf.push(self.destination); // destination ID
+        		// bits 0-3: 16 class ID available
+		        // bits 4-7: 16 component ID available
+		        buf.push(self.class as u8 & 0xF | self.component & 0xF0); // class/component ID
+		        buf.push(self.id); // message ID		
+        	}
+        }
 
         for field in &self.fields {
             match field.value {
@@ -917,10 +979,33 @@ impl PprzMessage {
     }
 
 
-    /// Set the sourc (`SENDER_ID`) of the message
+    /// Set the soure (`SENDER_ID`) of the message
     /// Important when sending messages from the ground to the UAV
     pub fn set_sender(&mut self, sender_id: u8) {
         self.source = sender_id;
+    }
+    
+    /// Set the destination (`SENDER_ID`) of the message
+    pub fn set_destinaton(&mut self, destination_id: u8) {
+        self.destination = destination_id;
+    }
+    
+    /// Set class ID of the message
+    /// bits 0-3: 16 class ID available
+    pub fn set_class(&mut self, class_id: PprzMsgClassID) {
+        self.class = class_id;
+    }
+    
+    /// Set component ID of the message
+    /// bits 4-7: 16 component ID available
+    pub fn set_component(&mut self, component_id: u8) {
+        self.component = component_id;
+    }
+    
+    /// Set protocol version
+    /// either Pprzlink 1.0 or Pprzlink 2.0
+    pub fn set_protocol(&mut self, new_protocol: PprzProtocolVersion) {
+	    self.protocol = new_protocol;
     }
 }
 
@@ -1080,11 +1165,11 @@ fn has_attribute(attributes: &Vec<OwnedAttribute>, value: &str) -> (bool, usize)
     return (false, idx);
 }
 
-pub fn build_dictionary(file: File) -> PprzDictionary {
+pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> PprzDictionary {
     let file = BufReader::new(file);
     let mut dictionary = PprzDictionary { classes: vec![] };
     let parser = EventReader::new(file);
-    let mut current_class = None;
+    let mut current_class = PprzMsgClassID::Unknown;
     for e in parser {
         match e {
             Ok(XmlEvent::StartElement { name, attributes, .. }) => {
@@ -1107,7 +1192,7 @@ pub fn build_dictionary(file: File) -> PprzDictionary {
                         };
 
                         // save the current class
-                        current_class = Some(class_name);
+                        current_class = class_name;
 
                         // check if we have the message class already
                         if dictionary.contains(class_name) {
@@ -1143,7 +1228,7 @@ pub fn build_dictionary(file: File) -> PprzDictionary {
                         if !last_class.contains(msg_id) {
                             // new message
                             let msg = PprzMessage {
-                                protocol: PprzProtocolVersion::ProtocolV1,
+                                protocol: pprzlink_version,
                                 source: 0,
                                 destination: 0,
                                 component: 0,

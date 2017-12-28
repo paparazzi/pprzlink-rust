@@ -1,6 +1,6 @@
 [package]
 name = "pprzlink"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Michal Podhradsky <mpodhradsky@galois.com>"]
 description = "Rust library for pprzlink"
 license = "GPL-3.0"
@@ -12,5 +12,5 @@ categories = ["embedded", "parsing","parser-implementations"]
 
 [dependencies]
 xml-rs = "0.6"
-ivyrust = "0.1.1"
+ivyrust = {git = "https://github.com/paparazzi/ivy-rust" }
 byteorder = "1.1.0"
