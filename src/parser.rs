@@ -262,38 +262,17 @@ impl PprzMessage {
         }
     }
 
-	/// Message bytes
-	/// Pprzlink 1.0
-	/// 0 SENDER_ID
-    /// 1 MSG_ID
-    /// 2 MSG_PAYLOAD
-	///
-	///
-	/// Pprzlink 2.0
-	/// 0 SOURCE (~sender_ID)
-    /// 1 DESTINATION (can be a broadcast ID)
-    /// 2 CLASS/COMPONENT
-    /// 3 MSG_ID
-    /// 4 MSG_PAYLOAD
-    ///
+	/// Parsing a string to a PPRZ message
+	/// the format is:
+	/// "SENDER"
+	/// "MSG_NAME"
+	/// 0-N "FIELDS"
     pub fn update_from_string(&mut self, payload: &Vec<&str>) {
-    	let mut idx;
-    	match self.protocol {
-    		PprzProtocolVersion::ProtocolV1 => {
-    			if payload.len() <= 2 {
-			    	// message contains no payload (only SENDER and MSG_NAME)
-		    		return;
-		    	}
-	   			idx = 2;
-    		}
-    		PprzProtocolVersion::ProtocolV2 => {
-    			if payload.len() <= 4 {
-			    	// message contains no payload (only SENDER and MSG_NAME)
-		    		return;
-		    	}
-    			idx = 4;
-    		}
+    	if payload.len() < 2 {
+			// message contains no payload (only SENDER and MSG_NAME)
+		    return;
     	}
+    	let mut idx = 2;
 
         for field in &mut self.fields {
             match field.value {
