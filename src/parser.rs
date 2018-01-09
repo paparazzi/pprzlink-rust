@@ -341,8 +341,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<u8>().unwrap());
                     }
                     field.value = PprzMsgBaseType::Uint8Arr(data);
@@ -353,8 +359,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<u16>().unwrap());
                     }
                     field.value = PprzMsgBaseType::Uint16Arr(data);
@@ -377,8 +389,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<i8>().unwrap());
                     }
                     field.value = PprzMsgBaseType::Int8Arr(data);
@@ -389,8 +407,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<i16>().unwrap());
                     }
                     field.value = PprzMsgBaseType::Int16Arr(data);
@@ -401,8 +425,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<i32>().unwrap());
                     }
                     field.value = PprzMsgBaseType::Int32Arr(data);
@@ -413,8 +443,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<f32>().unwrap());
                     }
                     field.value = PprzMsgBaseType::FloatArr(data);
@@ -425,8 +461,14 @@ impl PprzMessage {
                     // We have to assume that the array is the last field, thus the remaining of
                     // the payload is for the array
                     // We also have to assume that this is the last field in the `fields`
+                    //
+                    // We have to take care of empty elements as well, so for example
+                    // ["2", "MISSION_STATUS", "-1", "0", ""] will produce a data vec = [0]
                     let mut data = vec![];
                     for k in idx..payload.len() {
+                    	if payload[k].is_empty() {
+                    		continue;
+                    	}
                         data.push(payload[k].parse::<f64>().unwrap());
                     }
                     field.value = PprzMsgBaseType::DoubleArr(data);
