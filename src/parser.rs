@@ -272,6 +272,10 @@ impl PprzMessage {
 			// message contains no payload (only SENDER and MSG_NAME)
 		    return;
     	}
+
+		// attempt to update the sender field (first in the list)
+		self.source = payload[0].parse::<u8>().unwrap_or(0);
+
     	let mut idx = 2;
 
         for field in &mut self.fields {
