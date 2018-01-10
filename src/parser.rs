@@ -515,7 +515,7 @@ impl PprzMessage {
 
         for field in &mut self.fields {
             // check out of bounds condition
-            if idx > payload.len() {
+            if idx >= payload.len() {
                 panic!("Error in update: idx= {} > len={} !", idx, payload.len());
             }
 
