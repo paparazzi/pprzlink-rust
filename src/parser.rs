@@ -1316,7 +1316,7 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
                         let field_type: PprzMsgBaseType =
                             match attributes[type_idx].value.as_ref() {
                                 "float" => PprzMsgBaseType::Float(0.0),
-                                "float[]" => PprzMsgBaseType::FloatArr(vec![]),
+                                "float[]" | "float[3]" | "float[4]" => PprzMsgBaseType::FloatArr(vec![]),
                                 "double" => PprzMsgBaseType::Double(0.0),
                                 "double[]" => PprzMsgBaseType::DoubleArr(vec![]),
                                 "uint8" => PprzMsgBaseType::Uint8(0),
