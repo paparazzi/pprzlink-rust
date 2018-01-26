@@ -1,12 +1,11 @@
 // =========================
 // Ppprzlink Messages
 // =========================
-extern crate xml;
 use std::fs::File;
 use std::io::BufReader;
 use std::fmt;
-use self::xml::reader::{EventReader, XmlEvent};
-use self::xml::attribute::OwnedAttribute;
+use super::xml::reader::{EventReader, XmlEvent};
+use super::xml::attribute::OwnedAttribute;
 
 /// define constants
 const V1_SENDER_ID: usize  = 0;

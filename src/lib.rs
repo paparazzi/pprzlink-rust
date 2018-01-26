@@ -1,8 +1,14 @@
 pub mod transport;
 pub mod parser;
+pub mod secure_transport;
+
+extern crate rusthacl;
+extern crate xml;
+extern crate byteorder;
 
 // TODO: remove once all tests are done
 extern crate ivyrust;
+
 
 #[cfg(test)]
 mod tests {
