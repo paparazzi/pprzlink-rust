@@ -8,13 +8,14 @@ use super::xml::reader::{EventReader, XmlEvent};
 use super::xml::attribute::OwnedAttribute;
 
 /// define constants
-const V1_SENDER_ID: usize  = 0;
+const V1_V2_SENDER_ID: usize  = 0;
 const V1_MSG_ID: usize  = 1;
+const V1_MSG_PAYLOAD: usize = 2;
 
-const V2_SENDER_ID: usize  = 0;
-const V2_DESTINATION: usize  = 1;
-const V2_CLASS_COMPONENT: usize  = 2;
-const V2_MSG_ID: usize  = 3;
+const V2_DESTINATION_ID: usize  = 1;
+const V2_CLASS_COMPONENT_ID: usize  = 2;
+pub const V2_MSG_ID: usize  = 3;
+const V2_MSG_PAYLOAD: usize = 4;
 
 
 /// two versions of pprzlink protocol
@@ -241,6 +242,19 @@ impl PprzMessage {
 			}
 			PprzProtocolVersion::ProtocolV2 => {
 				buf[V2_MSG_ID]
+			}
+		}
+	}
+	
+	/// update a message field with `name==name` with `value`
+	/// return true if successfull, false otherwise
+	/// Warning: use with care, as the type of the field can be changed with this function
+	pub fn update_single_field(&mut self, name: &str, value: PprzMsgBaseType) -> bool {
+		match self.fields.iter().position(|ref r| r.name == name) {
+			None => return false,
+			Some(idx) => {
+				self.fields[idx].value = value;
+				return true;
 			}
 		}
 	}
@@ -501,14 +515,31 @@ impl PprzMessage {
     /// ```
     /// 
     pub fn update(&mut self, payload: &[u8]) {
-        self.source = payload[0];
         let mut idx;
+        self.source = payload[V1_V2_SENDER_ID];
         match self.protocol {
         	PprzProtocolVersion::ProtocolV1 => {
-        		idx = 2;
+        		idx = V1_MSG_PAYLOAD;
+        		if payload.len() <= V1_MSG_ID {
+        			panic!("Error in update: V1_MSG_ID={}, payload.len= {}", V1_MSG_ID, payload.len());
+        		}
+        		
         	}
         	PprzProtocolVersion::ProtocolV2 => {
-        		idx = 4;
+        		idx = V2_MSG_PAYLOAD;
+        		if payload.len() <= V2_MSG_ID {
+        			panic!("Error in update: V2_MSG_ID={}, payload.len= {}", V2_MSG_ID, payload.len());
+        		}
+        		self.destination = payload[V2_DESTINATION_ID];
+        		self.class = match payload[V2_CLASS_COMPONENT_ID] & 0xF {
+	        		1 => PprzMsgClassID::Telemetry,
+	        		2 => PprzMsgClassID::Datalink,
+	        		3 => PprzMsgClassID::Ground,
+	        		4 => PprzMsgClassID::Alert,
+	        		5 => PprzMsgClassID::Intermcu,
+	        		_ => PprzMsgClassID::Unknown,	
+        		};
+        		self.component = payload[V2_CLASS_COMPONENT_ID] & 0xF0;
         	}
         }
 

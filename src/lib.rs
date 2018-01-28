@@ -5,6 +5,7 @@ pub mod secure_transport;
 extern crate rusthacl;
 extern crate xml;
 extern crate byteorder;
+extern crate rand;
 
 // TODO: remove once all tests are done
 extern crate ivyrust;
@@ -14,7 +15,7 @@ extern crate ivyrust;
 mod tests {
     use super::transport::PprzTransport;
     use super::parser;
-    use super::parser::PprzMsgClassID;
+    use super::parser::{PprzMsgClassID,PprzMsgBaseType};
     use std::fs::File;
 
 
@@ -214,6 +215,19 @@ mod tests {
         println!("Msg: {}", msg);
         assert_eq!(msg.name, name);
     }
+    
+    #[test]
+    fn get_and_modify_msg_field_v2() {
+    	let dictionary = get_dictionary_v2();
+    	let mut msg = dictionary.find_msg_by_name(&"KEY_EXCHANGE_GCS").unwrap();
+    	println!("msg = {}",msg);
+    	println!("msg.id = {}",msg.id);
+    	msg.update_single_field("msg_type", PprzMsgBaseType::Uint8(1));
+    	
+    	let v = vec![1,2,3,4,5];
+    	msg.update_single_field("msg_data", PprzMsgBaseType::Uint8Arr(v));
+    	println!("msg = {}",msg);
+    }
 
     #[test]
     fn dictionary_get_msgs() {
@@ -225,7 +239,7 @@ mod tests {
             None => panic!("No message class found"),
         };
 
-        assert_eq!(msgs.messages.len(), 54);
+        assert_eq!(msgs.messages.len(), 56);
     }
 
     #[test]
@@ -238,7 +252,7 @@ mod tests {
             None => panic!("No message class found"),
         };
 
-        assert_eq!(msgs.messages.len(), 54);
+        assert_eq!(msgs.messages.len(), 56);
     }
 
     #[test]

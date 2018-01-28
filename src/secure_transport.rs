@@ -2,9 +2,16 @@
 // Ppprzlink Secure Transport
 // =========================
 use super::rusthacl::*;
+use super::parser::{PprzDictionary, PprzMsgBaseType};
+use super::transport::PprzTransport;
+use std::sync::Arc;
 use std::mem;
 use std::io::Cursor;
-use byteorder::{LittleEndian, BigEndian, WriteBytesExt, ReadBytesExt};
+use super::rand::Rng;
+use super::rand::os::OsRng;
+use byteorder::{NetworkEndian, WriteBytesExt, ReadBytesExt};
+
+use parser::V2_MSG_ID;
 
 const PPRZ_MSG_TYPE_PLAINTEXT: u8 = 0xaa;
 const PPRZ_MSG_TYPE_ENCRYPTED: u8 = 0x55;
@@ -36,7 +43,8 @@ const PPRZ_CNTR_IDX: usize = 1;
 const PPRZ_AUTH_IDX: usize = 5;
 /// index of the beginning of the ciphertex
 const PPRZ_CIPH_IDX: usize = 7;
-
+/// legth of the message signature
+const PPRZ_SIGN_LEN: usize = 64;
 /// length of the encryption keys
 const PPRZ_KEY_LEN: usize = 32;
 /// length of the authenticated data
@@ -47,25 +55,23 @@ const PPRZ_MAC_LEN: usize = 16;
 const PPRZ_NONCE_LEN: usize = 12;
 /// length of the counter
 const PPRZ_COUNTER_LEN: usize = 4;
-
 /// index of the message ID for plaintext messages
 const PPRZ_PLAINTEXT_MSG_ID_IDX: usize = 4;
-
 /// 4 bytes of MSG info (source_ID, dest_ID, class_byte, msg_ID) + 1 GEC byte
 const PPRZ_PLAINTEXT_MSG_MIN_LEN: usize = 5;
-
 /// 20 bytes crypto overhead + 4 bytes MSG info + 1 GEC byte
 const PPRZ_ENCRYPTED_MSG_MIN_LEN: usize = 25;
-
 /// length of the crypto overhead (4 bytes of counter + 16 bytes of tag)
 const PPRZ_CRYPTO_OVERHEAD: usize = 20;
 
 
+/// Container for a symmetric key
 #[derive(Debug)]
 struct GecSymKey {
     key: [u8; PPRZ_KEY_LEN],
     nonce: [u8; PPRZ_NONCE_LEN],
     ctr: u32,
+    ready: bool,
 }
 
 impl GecSymKey {
@@ -77,10 +83,16 @@ impl GecSymKey {
             key: k,
             nonce: n,
             ctr: c,
+            ready: false,
         }
     }
 
-    pub fn update(&mut self, k: &[u8], n: &[u8], c: u32) -> Result<(), String> {
+    pub fn is_ready(&self) -> bool {
+        return self.ready;
+    }
+
+    #[allow(dead_code)]
+    pub fn set(&mut self, k: &[u8], n: &[u8], c: u32) -> Result<(), String> {
         if k.len() != PPRZ_KEY_LEN {
             return Err(String::from(
                 "GecSymKey update Error: k.len() != PPRZ_KEY_LEN",
@@ -95,50 +107,184 @@ impl GecSymKey {
         self.ctr = c;
         self.key.clone_from_slice(k);
         self.nonce.clone_from_slice(n);
+        self.ready = true;
 
         Ok(())
     }
 }
 
-/// Convert bytes to a counter
-/// Network byte order is big endian
+/// Convert bytes to a 32 bit counter
+/// From NetworkEndian -> NativeEndian
 pub fn pprzlink_bytes_to_counter(bytes: &[u8]) -> Result<u32, String> {
     let size = mem::size_of::<u32>();
     if bytes.len() != size {
-        return Err(String::from("Error, size of slice doesn't match the size of u32"));
+        return Err(String::from(
+            "Error, size of slice doesn't match the size of u32",
+        ));
     }
     let mut rdr = Cursor::new(bytes);
-    match rdr.read_u32::<BigEndian>() {
+    match rdr.read_u32::<NetworkEndian>() {
         Ok(v) => return Ok(v),
         Err(_) => return Err(String::from("Error during reading bytes")),
     };
 }
 
+/// Convert a 32 bit counter to network endianness
+/// From NativeEndian -> NetworkEndian
 pub fn pprzlink_counter_to_bytes(c: u32) -> Vec<u8> {
-	let mut buf = vec![];
-	buf.write_u32::<LittleEndian>(c).expect("Error - converting to bytes not succesful");
-	buf
+    let mut buf = vec![];
+    buf.write_u32::<NetworkEndian>(c).expect(
+        "Error - converting to bytes not succesful",
+    );
+    buf
 }
 
 /// can be used for for tx and rx
 pub struct SecurePprzTransport {
-    pub length: u8,
-    pub buf: Vec<u8>,
+    /// pprz transport for parsing incoming messages
+    rx: PprzTransport,
+    /// pprz transport for constructing outgoing messages
+    tx: PprzTransport,
+    /// list of whitelisted message IDs
     pub allowed_msg_ids: Vec<u8>,
+    /// symmetric session key for incoming messages
     rx_sym_key: GecSymKey,
+    /// symmetric session key for outgoing messages
+    tx_sym_key: GecSymKey,
+    /// set STS party
+    party: StsParty,
+    /// set STS stage
+    stage: StsStage,
+    /// mark last STS error
+    last_error: StsError,
+    /// last error message
+    last_error_message: String,
+    /// remote party's public key
+    their_public_key: GecPubKey,
+    /// local private key
+    my_private_key: GecPrivKey,
+    /// remote party's ephemeral key for STS
+    their_public_ephemeral: GecPubKey,
+    /// local private key for STS
+    my_private_ephemeral: GecPrivKey,
+    /// pprz dictionary for sending KEY_EXCHANGE and other messages
+    dictionary: Option<Arc<PprzDictionary>>,
+    /// destination ID for the messages
+    destination_id: u8,
+    /// sender ID for the messages
+    sender_id: u8,
 }
 
 impl SecurePprzTransport {
-    pub fn new() -> SecurePprzTransport {
+    /// Create a new transport. Required fields are:
+    /// party - which StS party are we
+    /// destination_id - the AC_ID of the destination
+    pub fn new(party: StsParty, destination_id: u8) -> SecurePprzTransport {
         SecurePprzTransport {
-            length: 0,
-            buf: vec![],
+            rx: PprzTransport::new(),
+            tx: PprzTransport::new(),
             allowed_msg_ids: vec![],
             rx_sym_key: GecSymKey::new(),
+            tx_sym_key: GecSymKey::new(),
+            party: party,
+            stage: StsStage::Init,
+            last_error: StsError::ERROR_NONE,
+            last_error_message: String::new(),
+            their_public_key: GecPubKey::new(),
+            my_private_key: GecPrivKey::new(),
+            their_public_ephemeral: GecPubKey::new(),
+            my_private_ephemeral: GecPrivKey::new(),
+            dictionary: None,
+            destination_id: destination_id,
+            sender_id: 0,
         }
     }
 
-    pub fn process_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
+    /// set the destination ID for the messages
+    pub fn set_destination(&mut self, id: u8) {
+        self.destination_id = id;
+    }
+
+    /// set sender ID for the messages
+    pub fn set_sender(&mut self, id: u8) {
+        self.sender_id = id;
+    }
+
+    /// Checks if the message is in the whitelist, and if so, prepends a crypto byte
+    /// Assumes payload in form of source_ID .. msg_payload
+    /// Returns plaintext pprzlink 2.0 message
+    pub fn pack_plaintext_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        if payload.len() <= V2_MSG_ID {
+            return Err(String::from("Plaintext msg payload too short"));
+        }
+        // check if the message ID is whitelisted
+        if self.allowed_msg_ids.contains(&payload[V2_MSG_ID]) {
+            let mut v = vec![PPRZ_MSG_TYPE_PLAINTEXT];
+            v.extend_from_slice(&payload);
+            return Ok(v);
+        }
+        return Err(String::from("Plaintext msg not in the whitelist"));
+    }
+
+
+    /// Attemp message encryption
+    /// Adds crypto_byte, counter and tag
+    /// Assumes that the first two bytes of 'payload' are source_ID and dest_ID
+    /// and these two bytes will be authenticated
+    /// Returns encrypted pprzlink 2.0 message (crypto_byte .. tag)
+    pub fn encrypt_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        if payload.len() <= V2_MSG_ID {
+            return Err(String::from("Msg payload too short"));
+        }
+
+        if !self.tx_sym_key.is_ready() {
+            return Err(String::from("Encryption keys not ready"));
+        }
+
+        // increment counter
+        let counter = self.tx_sym_key.ctr + 1;
+        // convert to bytes
+        let counter_as_bytes = pprzlink_counter_to_bytes(counter);
+
+        // update nonce
+        self.rx_sym_key.nonce[0..4].clone_from_slice(&counter_as_bytes);
+
+        // update intermediate fields
+        let auth: &[u8] = &payload[0..PPRZ_AUTH_LEN];
+        let plaintext: &[u8] = &payload[PPRZ_AUTH_LEN..];
+        let mut ciphertext = vec![0; plaintext.len()];
+        let mut tag: [u8; PPRZ_MAC_LEN] = [0; PPRZ_MAC_LEN];
+        let mut msg = Vec::with_capacity(payload.len() + PPRZ_CRYPTO_OVERHEAD + 1);
+        msg.push(PPRZ_MSG_TYPE_ENCRYPTED); // crypto byte
+        match chacha20poly1305_aead_encrypt(
+            &mut ciphertext,
+            &mut tag,
+            plaintext,
+            auth,
+            &self.tx_sym_key.key,
+            &self.tx_sym_key.nonce,
+        ) {
+            Ok(val) => {
+                if val {
+                    self.tx_sym_key.ctr = counter; // update counter
+                    msg.extend_from_slice(&counter_as_bytes); // 4 bytes of counter
+                    msg.extend_from_slice(auth); // 2 bytes of auth
+                    msg.extend_from_slice(&ciphertext); // ciphertext
+                    msg.extend_from_slice(&tag); // tag
+                    return Ok(msg);
+                }
+            }
+            Err(msg) => return Err(msg),
+        };
+
+        Ok(msg)
+    }
+
+
+    /// Attemp message decryption
+    /// If a message is unencrypted, pass it through only if the MSG_ID is in the whitelist
+    /// Returns Pprzlink 2.0 message bytes (source_ID .. msg payload)
+    pub fn decrypt_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
         let mut data = vec![];
         match payload[PPRZ_GEC_IDX] {
             PPRZ_MSG_TYPE_PLAINTEXT => {
@@ -162,21 +308,28 @@ impl SecurePprzTransport {
                     return Err(String::from("Encrypted msg payload too short"));
                 }
 
-				// first check the message counter
+                if !self.rx_sym_key.is_ready() {
+                    return Err(String::from("Encryption keys not ready"));
+                }
+
+                // first check the message counter
                 let counter: &[u8] = &payload[PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN];
-                let counter_as_u32 = pprzlink_bytes_to_counter(counter).expect("Error converting counter");
-                
+                let counter_as_u32 =
+                    pprzlink_bytes_to_counter(counter).expect("Error converting counter");
+
                 // check against the saved counter
                 if counter_as_u32 <= self.rx_sym_key.ctr {
-                	return Err(String::from("Decryption error: received counter is not larger than the saved counter"));
+                    return Err(String::from(
+                        "Decryption error: received counter is not larger than the saved counter",
+                    ));
                 }
-                
+
                 // update nonce
                 self.rx_sym_key.nonce[0..4].clone_from_slice(
                     &payload
                         [PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN],
                 );
-                
+
                 // update intermediate fields
                 let auth: &[u8] = &payload[PPRZ_AUTH_IDX..PPRZ_AUTH_IDX + PPRZ_AUTH_LEN];
                 let tag: &[u8] = &payload[payload.len() - PPRZ_MAC_LEN..];
@@ -185,12 +338,6 @@ impl SecurePprzTransport {
                 plaintext.extend_from_slice(auth);
                 plaintext.extend_from_slice(ciphertext);
 
-                println!("counter = {:?}", counter);
-                println!("nonce = {:?}", self.rx_sym_key.nonce);
-                println!("auth = {:?}", auth);
-                println!("ciphertext = {:?}", ciphertext);
-                println!("plaintext ={:?}", plaintext);
-                println!("tag = {:?}", tag);
                 match chacha20poly1305_aead_decrypt(
                     &mut plaintext[auth.len()..],
                     tag,
@@ -201,7 +348,7 @@ impl SecurePprzTransport {
                 ) {
                     Ok(val) => {
                         if val {
-                        	self.rx_sym_key.ctr = counter_as_u32;
+                            self.rx_sym_key.ctr = counter_as_u32;
                             return Ok(plaintext);
                         }
                     }
@@ -216,14 +363,422 @@ impl SecurePprzTransport {
             }
         }
     }
+
+    /// Input:
+    /// payload - byte representation of paparazzi message v2.0, specifically
+    /// in the format of:
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    ///
+    /// Output:
+    /// if status == Crypto_OK => returns an encrypted message in the format of:
+    /// ```ignore
+    /// 0 PPRZ_STX
+    /// 1 msg len
+    /// 2 crypto byte
+    /// 3 counter MSB 1 {big-endian}
+    /// 4 counter MSB 2 {big-endian}
+    /// 5 counter MSB 3 {big-endian}
+    /// 6 counter MSB 4 {big-endian}
+    /// 7 	source_ID {auth}
+    /// 8 	dest_ID {auth}
+    /// 9: class_component_IN {encrypted}
+    /// 10: msg_ID {encrypted}
+    /// 11..end-19: optional msg payload {encrypted}
+    /// end-18..end-2: tag (16 bytes) {tag}
+    /// end-1 crc A
+    /// end crc B
+    /// ```
+    ///
+    /// if status != Crypto_OK => returns a plaintext message relevant to the internal stage
+    /// of the STS protocol in the format of:
+    /// ```ignore
+    /// 0 PPRZ_STX
+    /// 1 msg len
+    /// 2 crypto byte
+    /// 3 source_ID
+    /// 4 dest_ID
+    /// 10: class_component_IN
+    /// 11: msg_ID
+    /// 12..end-2: optional msg payload
+    /// end-1 crc A
+    /// end crc B
+    /// ```
+    ///
+    /// If an error occurs during message processing, `None` is returned.
+    /// In such case the last error can be read using `last_error` and `last_error_message`
+    /// variables.
+    pub fn construct_pprz_msg(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
+        match self.stage {
+            StsStage::CryptoOK => {
+                match self.encrypt_message(payload) {
+                    Ok(v) => {
+                        // message encrypted sucessfully
+                        self.tx.construct_pprz_msg(&v); // append STX and checksum
+                        return Some(self.tx.buf.clone()); // return a message ready to be sent
+                    }
+                    Err(e) => {
+                        self.last_error = StsError::ONGOING_COMM_ERROR;
+                        self.last_error_message = e;
+                        return None;
+                    }
+                }
+            }
+            StsStage::Init => {
+                match self.party {
+                    StsParty::Initiator => {
+                        let mut msg = self.sts_initiate_msg(); // get MSG1
+                        msg = self.pack_plaintext_message(&msg).unwrap(); // add crypto byte (and pass whitelist)
+                        self.tx.construct_pprz_msg(&msg); // append STX and checksum
+                        self.stage = StsStage::WaitMsg2; // update status
+                        return Some(self.tx.buf.clone()); // return a message ready to be sent
+                    }
+                    StsParty::Responder => {
+                        // TODO
+                    }
+                }
+            }
+            StsStage::WaitMsg1 => {
+                // TODO
+            }
+            StsStage::WaitMsg2 => {
+                // TODO
+            }
+            StsStage::WaitMsg3 => {
+                // TODO
+            }
+        }
+        None
+    }
+
+
+    /// First step in STS protocol
+    /// Party `A` generates an ephemeral (random) curve25519 key pair (Pae, Qae) and sends Pae.
+    /// generate public and private keys
+    fn sts_initiate_msg(&mut self) -> Vec<u8> {
+        // ephemeral keys
+        let mut q_ae = vec![0; 32];
+        let mut p_ae = vec![0; 32];
+        let mut basepoint: [u8; 32] = [0; 32];
+        basepoint[0] = 9;
+
+        let mut rng = OsRng::new().unwrap(); // get a RNG
+        rng.fill_bytes(q_ae.as_mut_slice()); // generate random Q_ae
+        assert_eq!(
+            // calculate P_ae
+            curve25519_crypto_scalarmult(p_ae.as_mut_slice(), q_ae.as_slice(), &basepoint),
+            Ok(())
+        );
+        self.my_private_ephemeral.set(&q_ae, &p_ae).unwrap(); // update my private ephemeral key
+
+        // access the dictionary and create a message.
+        let mut msg1;
+        match self.dictionary {
+            Some(ref dict) => {
+                msg1 = dict.find_msg_by_name(&"KEY_EXCHANGE_GCS").unwrap();
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // update message
+        msg1.set_sender(self.sender_id);
+        msg1.set_destinaton(self.destination_id);
+        msg1.update_single_field("msg_type", PprzMsgBaseType::Uint8(StsMsgType::P_AE as u8));
+        msg1.update_single_field(
+            "msg_data",
+            PprzMsgBaseType::Uint8Arr(self.my_private_ephemeral.pubkey.to_vec()),
+        );
+
+        // make sure the message is in the whitelist
+        if !self.allowed_msg_ids.contains(&msg1.id) {
+            self.allowed_msg_ids.push(msg1.id);
+        }
+
+        return msg1.to_bytes();
+    }
+
+    /// Parse incoming message bytes and returns a new decrypted message if it is available.
+    /// Otherwise `None` is returned.
+    /// While the status != Crypto_OK no message is returned, and all logic is handled internally.
+    /// Returned message has format of
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// and can be directly processed by a parser
+    pub fn parse_byte(&mut self, b: u8) -> Option<Vec<u8>> {
+        match self.stage {
+            StsStage::CryptoOK => {
+                // parse the byte
+                if self.rx.parse_byte(b) {
+                    // we just got a message
+                    let b = self.rx.buf.clone(); // clone the buffer
+                    self.rx.reset(); // reset the transport
+                    match self.decrypt_message(&b) { // attempt decryption
+                        Ok(v) => return Some(v), // return payload
+                        Err(e) => {
+                            // log errors and return nothing
+                            self.last_error = StsError::ONGOING_COMM_ERROR;
+                            self.last_error_message = e;
+                            return None;
+                        }
+                    }
+                }
+            }
+            StsStage::Init => {
+                // TODO ?
+            }
+            StsStage::WaitMsg1 => {
+                match self.party {
+                    StsParty::Initiator => {}
+                    StsParty::Responder => {
+                        // process msg1
+                    }
+                }
+            }
+            StsStage::WaitMsg2 => {
+                match self.party {
+                    StsParty::Initiator => {
+	                    // process msg2
+                    }
+                    StsParty::Responder => {}
+                }
+            }
+            StsStage::WaitMsg3 => {
+                match self.party {
+                    StsParty::Initiator => {}
+                    StsParty::Responder => {
+                        // process msg3
+                    }
+                }
+            }
+        }
+        None
+    }
 }
+
+
+/// Private key container
+/// Contains both public key P_a and
+/// private key Q_a
+#[derive(Debug)]
+struct GecPrivKey {
+    privkey: [u8; PPRZ_KEY_LEN],
+    pubkey: [u8; PPRZ_KEY_LEN],
+    ready: bool,
+}
+
+impl GecPrivKey {
+    pub fn new() -> GecPrivKey {
+        let q = [0; PPRZ_KEY_LEN];
+        let p = [0; PPRZ_KEY_LEN];
+        GecPrivKey {
+            privkey: q,
+            pubkey: p,
+            ready: false,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        return self.ready;
+    }
+
+
+    #[allow(dead_code)]
+    pub fn set(&mut self, q: &[u8], p: &[u8]) -> Result<(), String> {
+        if q.len() != PPRZ_KEY_LEN {
+            return Err(String::from(
+                "GecPrivKey update Error: q.len() != PPRZ_KEY_LEN",
+            ));
+        }
+        if p.len() != PPRZ_NONCE_LEN {
+            return Err(String::from(
+                "GecPrivKey update Error: p.len() != PPRZ_NONCE_LEN",
+            ));
+        }
+
+        self.privkey.clone_from_slice(q);
+        self.pubkey.clone_from_slice(p);
+        self.ready = true;
+
+        Ok(())
+    }
+}
+
+
+/// Public key container
+/// Contains public key P_b
+#[derive(Debug)]
+struct GecPubKey {
+    pubkey: [u8; PPRZ_KEY_LEN],
+    ready: bool,
+}
+
+impl GecPubKey {
+    //#[allow(dead_code)]
+    pub fn new() -> GecPubKey {
+        let p = [0; PPRZ_KEY_LEN];
+        GecPubKey {
+            pubkey: p,
+            ready: false,
+        }
+    }
+
+    //#[allow(dead_code)]
+    pub fn is_ready(&self) -> bool {
+        return self.ready;
+    }
+
+    #[allow(dead_code)]
+    pub fn set(&mut self, p: &[u8]) -> Result<(), String> {
+        if p.len() != PPRZ_NONCE_LEN {
+            return Err(String::from(
+                "GecPubKey update Error: p.len() != PPRZ_NONCE_LEN",
+            ));
+        }
+        self.pubkey.clone_from_slice(p);
+        self.ready = true;
+
+        Ok(())
+    }
+}
+
+struct Ed25519Signature {
+    pub sign: [u8; PPRZ_SIGN_LEN],
+}
+
+/// Party type
+#[derive(Debug)]
+pub enum StsParty {
+    Initiator = 0,
+    Responder = 1,
+}
+
+/// Stage of station-to-station key exchange
+#[allow(dead_code)]
+#[derive(Debug)]
+#[derive(PartialEq)]
+enum StsStage {
+    Init,
+    WaitMsg1,
+    WaitMsg2,
+    WaitMsg3,
+    CryptoOK,
+}
+
+/// key exchange message type
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+#[derive(PartialEq)]
+enum StsMsgType {
+    P_AE = 0,
+    P_BE = 1,
+    SIG = 2,
+}
+
+/// key exchange error
+#[allow(non_camel_case_types, dead_code)]
+#[derive(Debug)]
+enum StsError {
+    ERROR_NONE,
+    // RESPONDER ERRORS
+    MSG1_TIMEOUT_ERROR,
+    MSG1_ENCRYPT_ERROR,
+    MSG3_TIMEOUT_ERROR,
+    MSG3_DECRYPT_ERROR,
+    MSG3_SIGNVERIFY_ERROR,
+    // INITIATOR ERRORS
+    MSG2_TIMEOUT_ERROR,
+    MSG2_DECRYPT_ERROR,
+    MSG2_SIGNVERIFY_ERROR,
+    MSG3_ENCRYPT_ERROR,
+    // BOTH PARTIES
+    UNEXPECTED_MSG_TYPE_ERROR,
+    UNEXPECTED_STS_STAGE_ERROR,
+    UNEXPECTED_MSG_ERROR,
+    ONGOING_COMM_ERROR,
+}
+
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    // TODO: add tests for encryption and decryption
-    // TODO: figure how to nicely update the Gec sym key struct
+
+    #[test]
+    fn test_decryption() {
+        let mut trans = SecurePprzTransport::new(StsParty::Initiator, 0);
+        assert_eq!(trans.rx_sym_key.set(&KEY, &NONCE, 0), Ok(()));
+
+        let mut buf = vec![PPRZ_MSG_TYPE_ENCRYPTED];
+        buf.extend_from_slice(&NONCE[0..4]); // counter
+        buf.extend_from_slice(&AUTH); // auth data
+        buf.extend_from_slice(&CIPHERTEXT); // encrypted payload
+        buf.extend_from_slice(&MAC); // tag
+
+        println!("Payload to be decrypted: {:?}", buf);
+        assert_eq!(trans.decrypt_message(&buf).unwrap(), [1, 2, 4, 3]);
+    }
+
+
+    #[test]
+    fn test_encryption() {
+        let mut trans = SecurePprzTransport::new(StsParty::Initiator, 0);
+        let cntr = &NONCE[0..4];
+        let cntr = pprzlink_bytes_to_counter(cntr).unwrap();
+        assert_eq!(trans.tx_sym_key.set(&KEY, &NONCE, cntr - 1), Ok(()));
+
+        let mut buf_plaintext: Vec<u8> = vec![];
+        buf_plaintext.extend_from_slice(&AUTH);
+        buf_plaintext.extend_from_slice(&PLAINTEXT);
+
+        let mut buf = vec![PPRZ_MSG_TYPE_ENCRYPTED];
+        buf.extend_from_slice(&NONCE[0..4]); // counter
+        buf.extend_from_slice(&AUTH); // auth data
+        buf.extend_from_slice(&CIPHERTEXT); // encrypted payload
+        buf.extend_from_slice(&MAC); // tag
+
+        println!("Payload: {:?}", buf_plaintext);
+        assert_eq!(trans.encrypt_message(buf_plaintext.as_ref()).unwrap(), buf);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_incorrect_decryption() {
+        let mut trans = SecurePprzTransport::new(StsParty::Initiator, 0);
+        assert_eq!(trans.rx_sym_key.set(&KEY, &NONCE, 0), Ok(()));
+
+        let mut buf = vec![PPRZ_MSG_TYPE_ENCRYPTED];
+        buf.extend_from_slice(&NONCE[4..8]); // counter -> provide incorrect counter for the test
+        buf.extend_from_slice(&AUTH); // auth data
+        buf.extend_from_slice(&CIPHERTEXT); // encrypted payload
+        buf.extend_from_slice(&MAC); // tag
+
+        trans.decrypt_message(&buf).unwrap();
+    }
+
+    #[test]
+    fn test_plaintext() {
+        let mut trans = SecurePprzTransport::new(StsParty::Initiator, 0);
+        trans.allowed_msg_ids.push(3);
+
+        let mut buf = vec![PPRZ_MSG_TYPE_PLAINTEXT];
+        buf.extend_from_slice(&AUTH); // auth data
+        buf.extend_from_slice(&PLAINTEXT); // encrypted payload
+
+        assert_eq!(trans.decrypt_message(&buf).unwrap(), [1, 2, 4, 3]);
+    }
+
     static KEY: [u8; 32] = [
         0x70,
         0x03,
@@ -281,23 +836,4 @@ mod tests {
         0xea,
     ];
     static NONCE: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc];
-
-
-    #[test]
-    fn trivial() {    	
-        let mut trans = SecurePprzTransport::new();
-        trans.rx_sym_key.update(&KEY, &NONCE, 0);
-
-        let mut buf = vec![PPRZ_MSG_TYPE_ENCRYPTED];
-        buf.extend_from_slice(&NONCE[0..4]); // counter
-        buf.extend_from_slice(&AUTH); // auth data
-        buf.extend_from_slice(&CIPHERTEXT); // encrypted payload
-        buf.extend_from_slice(&MAC); // tag
-
-        println!("b.len={}", buf.len());
-        match trans.process_message(&buf) {
-            Ok(x) => println!("ok: plaintext: {:?}",x),
-            Err(e) => println!("error {}", e),
-        }
-    }
 }

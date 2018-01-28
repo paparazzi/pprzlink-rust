@@ -15,3 +15,4 @@ xml-rs = "0.6"
 ivyrust = {git = "https://github.com/paparazzi/ivy-rust" }
 byteorder = "1.1.0"
 rusthacl = { git = "https://github.com/podhrmic/rusthacl.git" }
+rand = "0.3.18"
