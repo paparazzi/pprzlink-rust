@@ -259,6 +259,17 @@ impl PprzMessage {
 		}
 	}
 
+	/// get a value of a particular field with given name
+	/// return None if the field is non existent
+	pub fn get_single_field(&mut self, name: &str) -> Option<PprzMsgBaseType> {
+		match self.fields.iter().position(|ref r| r.name == name) {
+			None => return None,
+			Some(idx) => {
+				return Some(self.fields[idx].value.clone());
+			}
+		}
+	}
+
     /// Create a new empty message, all fields set to zero,
     /// all vectors are empty
     pub fn new() -> PprzMessage {

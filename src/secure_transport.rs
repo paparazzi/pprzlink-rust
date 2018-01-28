@@ -2,7 +2,7 @@
 // Ppprzlink Secure Transport
 // =========================
 use super::rusthacl::*;
-use super::parser::{PprzDictionary, PprzMsgBaseType};
+use super::parser::{PprzDictionary, PprzMsgBaseType, PprzMsgClassID, PprzMessage};
 use super::transport::PprzTransport;
 use std::sync::Arc;
 use std::mem;
@@ -45,6 +45,8 @@ const PPRZ_AUTH_IDX: usize = 5;
 const PPRZ_CIPH_IDX: usize = 7;
 /// legth of the message signature
 const PPRZ_SIGN_LEN: usize = 64;
+/// lenght of a hash for key derivation
+const PPRZ_HASH_LEN: usize = 64;
 /// length of the encryption keys
 const PPRZ_KEY_LEN: usize = 32;
 /// length of the authenticated data
@@ -63,7 +65,8 @@ const PPRZ_PLAINTEXT_MSG_MIN_LEN: usize = 5;
 const PPRZ_ENCRYPTED_MSG_MIN_LEN: usize = 25;
 /// length of the crypto overhead (4 bytes of counter + 16 bytes of tag)
 const PPRZ_CRYPTO_OVERHEAD: usize = 20;
-
+/// basepoint value for the scalar curve multiplication
+const PPRZ_CURVE_BASEPOINT: u8 = 9;
 
 /// Container for a symmetric key
 #[derive(Debug)]
@@ -173,6 +176,14 @@ pub struct SecurePprzTransport {
     destination_id: u8,
     /// sender ID for the messages
     sender_id: u8,
+    /// a message class we are interested in receiving
+    rx_msg_class: PprzMsgClassID,
+    /// msg1 of the Sts protocol
+    msg1: Option<Vec<u8>>,
+    /// msg2 of the Sts protocol
+    msg2: Option<Vec<u8>>,
+    /// msg 3 of the Sts protocol
+    msg3: Option<Vec<u8>>,
 }
 
 impl SecurePprzTransport {
@@ -197,7 +208,16 @@ impl SecurePprzTransport {
             dictionary: None,
             destination_id: destination_id,
             sender_id: 0,
+            rx_msg_class: PprzMsgClassID::Telemetry,
+            msg1: None,
+            msg2: None,
+            msg3: None,
         }
+    }
+
+    /// set the message class for incoming messages
+    pub fn set_msg_class(&mut self, msg_class: PprzMsgClassID) {
+        self.rx_msg_class = msg_class;
     }
 
     /// set the destination ID for the messages
@@ -433,49 +453,246 @@ impl SecurePprzTransport {
             StsStage::Init => {
                 match self.party {
                     StsParty::Initiator => {
-                        let mut msg = self.sts_initiate_msg(); // get MSG1
-                        msg = self.pack_plaintext_message(&msg).unwrap(); // add crypto byte (and pass whitelist)
-                        self.tx.construct_pprz_msg(&msg); // append STX and checksum
+                        // 1. A generates an ephemeral (random) curve25519 key pair (Pae, Qae)
+                        self.sts_ephemeral_curve25519_key_pair();
+                        // and sends P_ae
+                        let mut msg1 = self.sts_initiate_msg(); // get MSG1
+                        self.msg1 = Some(msg1.clone()); // save for reuse
+                        msg1 = self.pack_plaintext_message(&msg1).unwrap(); // add crypto byte (and pass whitelist)
+                        self.tx.construct_pprz_msg(&msg1); // append STX and checksum
                         self.stage = StsStage::WaitMsg2; // update status
                         return Some(self.tx.buf.clone()); // return a message ready to be sent
                     }
                     StsParty::Responder => {
-                        // TODO
+                        // 2. B generates ephemeral curve25519 key pair (Pbe, Qbe).
+                        self.sts_ephemeral_curve25519_key_pair();
+                        self.stage = StsStage::WaitMsg1; // update status
+                        return None; // return nothing
                     }
                 }
             }
             StsStage::WaitMsg1 => {
-                // TODO
+                match self.party {
+                    StsParty::Initiator => {} // shouldn't be here
+                    StsParty::Responder => {
+                        // B sends the message Pbe || Ekey=Kb,IV=Sb||zero(sig)
+                        let msg = self.msg2.clone();
+                        if let Some(tx_msg) = msg {
+                            let tx_msg = self.pack_plaintext_message(&tx_msg).unwrap(); // add crypto byte (and pass whitelist)
+                            self.tx.construct_pprz_msg(&tx_msg); // append STX and checksum
+                            self.stage = StsStage::WaitMsg3; // update status
+                            return Some(self.tx.buf.clone()); // return a message ready to be sent
+                        }
+                        return None;
+                    }
+                }
             }
             StsStage::WaitMsg2 => {
-                // TODO
+                match self.party {
+                    StsParty::Initiator => {
+                        // A sends the message3: Ekey=Ka,IV=Sa||zero(sig)
+                        let msg = self.msg3.clone();
+                        if let Some(tx_msg) = msg {
+                            let tx_msg = self.pack_plaintext_message(&tx_msg).unwrap(); // add crypto byte (and pass whitelist)
+                            self.tx.construct_pprz_msg(&tx_msg); // append STX and checksum
+                            self.stage = StsStage::CryptoOK; // update status
+                            return Some(self.tx.buf.clone()); // return a message ready to be sent
+                        }
+                        return None;
+                    }
+                    StsParty::Responder => {} // shouldn't be here
+                }
             }
             StsStage::WaitMsg3 => {
-                // TODO
+                match self.party {
+                    StsParty::Initiator => {} // shouldn't be here
+                    StsParty::Responder => {} // shouldn't be here either
+                }
             }
         }
         None
     }
 
 
+    /// Parse incoming message bytes and returns a new decrypted message if it is available.
+    /// Otherwise `None` is returned.
+    /// While the status != Crypto_OK no message is returned, and all logic is handled internally.
+    /// Returned message has format of
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// and can be directly processed by a parser
+    pub fn parse_byte(&mut self, b: u8) -> Option<Vec<u8>> {
+        match self.stage {
+            StsStage::CryptoOK => {
+                if self.rx.parse_byte(b) {
+                    // parse the byte
+                    // we just got a message
+                    let b = self.rx.buf.clone(); // clone the buffer
+                    self.rx.reset(); // reset the transport
+                    match self.decrypt_message(&b) { // attempt decryption
+                        Ok(v) => return Some(v), // return payload
+                        Err(e) => {
+                            // log errors and return nothing
+                            self.last_error = StsError::ONGOING_COMM_ERROR;
+                            self.last_error_message = e;
+                            return None;
+                        }
+                    }
+                }
+            }
+            StsStage::Init => {} // shouldn't be here
+            StsStage::WaitMsg1 => {
+                match self.party {
+                    StsParty::Initiator => {} // shouldn't be here
+                    StsParty::Responder => {
+                        // process msg1
+                        if self.rx.parse_byte(b) {
+                            // we just got a message
+                            let b = self.rx.buf.clone(); // clone the buffer
+                            self.rx.reset(); // reset the transport
+                            match self.decrypt_message(&b) { // attempt decryption
+                                Ok(v) => {
+                                    // we have a message
+                                    match self.sts_process_mgs1(&v) {
+                                        Ok(_) => {
+                                            // if OK, everything was handled in the underlying function
+                                            // so do nothing
+                                            return None;
+                                        }
+                                        Err(e) => {
+                                            // log errors and return nothing
+                                            self.last_error = StsError::MSG1_ERROR;
+                                            self.last_error_message = e;
+                                            return None;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    // log errors and return nothing
+                                    self.last_error = StsError::ONGOING_COMM_ERROR;
+                                    self.last_error_message = e;
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            StsStage::WaitMsg2 => {
+                match self.party {
+                    StsParty::Initiator => {
+                        // process msg2
+                        if self.rx.parse_byte(b) {
+                            let b = self.rx.buf.clone(); // clone the buffer
+                            self.rx.reset(); // reset the transport
+                            match self.decrypt_message(&b) { // attempt decryption
+                                Ok(v) => {
+                                    // we have a message
+                                    match self.sts_process_mgs2(&v) {
+                                        Ok(_) => {
+                                            // if OK, everything was handled in the underlying function
+                                            // so do nothing
+                                            return None;
+                                        }
+                                        Err(e) => {
+                                            // log errors and return nothing
+                                            self.last_error = StsError::MSG2_ERROR;
+                                            self.last_error_message = e;
+                                            return None;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    // log errors and return nothing
+                                    self.last_error = StsError::ONGOING_COMM_ERROR;
+                                    self.last_error_message = e;
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                    StsParty::Responder => {} 
+                }
+            }
+            StsStage::WaitMsg3 => {
+                match self.party {
+                    StsParty::Initiator => {}
+                    StsParty::Responder => {
+                        // process msg3
+                        if self.rx.parse_byte(b) {
+                            let b = self.rx.buf.clone(); // clone the buffer
+                            self.rx.reset(); // reset the transport
+                            match self.decrypt_message(&b) { // attempt decryption
+                                Ok(v) => {
+                                    // we have a message
+                                    match self.sts_process_mgs3(&v) {
+                                        Ok(_) => {
+                                            // if OK, we are ready for an ongoing communication
+                                            self.stage = StsStage::CryptoOK; // update status
+                                            return None;
+                                        }
+                                        Err(e) => {
+                                            // log errors and return nothing
+                                            self.last_error = StsError::MSG3_ERROR;
+                                            self.last_error_message = e;
+                                            return None;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    // log errors and return nothing
+                                    self.last_error = StsError::ONGOING_COMM_ERROR;
+                                    self.last_error_message = e;
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Generate ephemeral curve25519 key pair (Pbe, Qbe).
+    /// and store the keypair as `my_private_ephemeral`
+    fn sts_ephemeral_curve25519_key_pair(&mut self) {
+        // ephemeral keys
+        let mut q_e = vec![0; PPRZ_KEY_LEN];
+        let mut p_e = vec![0; PPRZ_KEY_LEN];
+        let mut basepoint: [u8; PPRZ_KEY_LEN] = [0; PPRZ_KEY_LEN];
+        basepoint[0] = PPRZ_CURVE_BASEPOINT;
+
+        let mut rng = OsRng::new().unwrap(); // get a RNG
+        rng.fill_bytes(q_e.as_mut_slice()); // generate random Q_ae
+        assert_eq!(
+            curve25519_crypto_scalarmult(p_e.as_mut_slice(), q_e.as_slice(), &basepoint),
+            Ok(())
+        );
+        self.my_private_ephemeral.set(&q_e, &p_e).unwrap(); // update my private ephemeral key
+    }
+
+    /// NOTE: for INITIATOR party only
     /// First step in STS protocol
     /// Party `A` generates an ephemeral (random) curve25519 key pair (Pae, Qae) and sends Pae.
     /// generate public and private keys
+    /// Returns the message as:
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
     fn sts_initiate_msg(&mut self) -> Vec<u8> {
-        // ephemeral keys
-        let mut q_ae = vec![0; 32];
-        let mut p_ae = vec![0; 32];
-        let mut basepoint: [u8; 32] = [0; 32];
-        basepoint[0] = 9;
-
-        let mut rng = OsRng::new().unwrap(); // get a RNG
-        rng.fill_bytes(q_ae.as_mut_slice()); // generate random Q_ae
-        assert_eq!(
-            // calculate P_ae
-            curve25519_crypto_scalarmult(p_ae.as_mut_slice(), q_ae.as_slice(), &basepoint),
-            Ok(())
-        );
-        self.my_private_ephemeral.set(&q_ae, &p_ae).unwrap(); // update my private ephemeral key
+        assert!(self.my_private_ephemeral.is_ready());
 
         // access the dictionary and create a message.
         let mut msg1;
@@ -503,10 +720,15 @@ impl SecurePprzTransport {
         return msg1.to_bytes();
     }
 
-    /// Parse incoming message bytes and returns a new decrypted message if it is available.
-    /// Otherwise `None` is returned.
-    /// While the status != Crypto_OK no message is returned, and all logic is handled internally.
-    /// Returned message has format of
+    /// NOTE: for RESPONDER party only
+    /// Process incoming message (expected MSG1)
+    /// if the right (KEY_EXCHANGE) message received with the right data (P_AE)
+    /// and the right P_AE.len=PPRZ_KEY_LEN, the internal state of Sts gets updated
+    /// (key derivation etc), and msg2 is prepared to be sent.
+    /// Input: decrypted message (source_ID .. msg payload)
+    /// Returns either `Ok()` if the message2 was sucessfully prepared or an Error string
+    ///
+    /// Note the generated message has a format of:
     /// Pprzlink 2.0
     /// ```ignore
     /// payload[0] source SENDER_ID
@@ -515,55 +737,536 @@ impl SecurePprzTransport {
     /// payload[3] MSG_ID
     /// payload[4-end] MSG_PAYLOAD
     /// ```
-    /// and can be directly processed by a parser
-    pub fn parse_byte(&mut self, b: u8) -> Option<Vec<u8>> {
-        match self.stage {
-            StsStage::CryptoOK => {
-                // parse the byte
-                if self.rx.parse_byte(b) {
-                    // we just got a message
-                    let b = self.rx.buf.clone(); // clone the buffer
-                    self.rx.reset(); // reset the transport
-                    match self.decrypt_message(&b) { // attempt decryption
-                        Ok(v) => return Some(v), // return payload
-                        Err(e) => {
-                            // log errors and return nothing
-                            self.last_error = StsError::ONGOING_COMM_ERROR;
-                            self.last_error_message = e;
-                            return None;
-                        }
+    fn sts_process_mgs1(&mut self, payload: &[u8]) -> Result<(), String> {
+        // check if the incoming message is really KEY_EXCHANGE_GCS
+        let mut msg;
+        match self.dictionary {
+            Some(ref dict) => {
+                let name = dict.get_msg_name(
+                    self.rx_msg_class,
+                    PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
+                ).expect("thread main: message name not found");
+                if name != "KEY_EXCHANGE_GCS" {
+                    let s = String::from(
+                        "Error, received message is not KEY_EXCHANGE_GCS, but ",
+                    ) + &name;
+                    return Err(s);
+                }
+                msg = dict.find_msg_by_name(&name).expect(
+                    "thread main: no message found",
+                );
+                // update message fields with real values
+                msg.update(payload);
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // check if the message has the correct type and value
+        match msg.get_single_field("msg_type") {
+            Some(f) => {
+                // see if it is P_AE and pass though if it is
+                if let PprzMsgBaseType::Uint8(a) = f {
+                    if a != StsMsgType::P_AE as u8 {
+                        return Err(String::from("Error: msg_type != P_AE"));
                     }
+                } else {
+                    return Err(String::from("Error: msg_type != PprzMsgBaseType::Uint8(a)"));
                 }
             }
-            StsStage::Init => {
-                // TODO ?
-            }
-            StsStage::WaitMsg1 => {
-                match self.party {
-                    StsParty::Initiator => {}
-                    StsParty::Responder => {
-                        // process msg1
-                    }
-                }
-            }
-            StsStage::WaitMsg2 => {
-                match self.party {
-                    StsParty::Initiator => {
-	                    // process msg2
-                    }
-                    StsParty::Responder => {}
-                }
-            }
-            StsStage::WaitMsg3 => {
-                match self.party {
-                    StsParty::Initiator => {}
-                    StsParty::Responder => {
-                        // process msg3
-                    }
-                }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_type' field"));
             }
         }
-        None
+
+        //  check if the message data are the correct length and value
+        match msg.get_single_field("msg_data") {
+            Some(f) => {
+                // see if it is uint8[] and pass though if it is
+                if let PprzMsgBaseType::Uint8Arr(a) = f {
+                    if a.len() != PPRZ_KEY_LEN {
+                        return Err(String::from("Error: msg_data.len != PPRZ_KEY_LEN"));
+                    } else {
+                        // all good
+                        self.their_public_ephemeral.set(&a).unwrap();
+                    }
+                } else {
+                    return Err(String::from(
+                        "Error: msg_data != PprzMsgBaseType::Uint8Arr(a)",
+                    ));
+                }
+            }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_data' field"));
+            }
+        }
+        assert!(self.their_public_ephemeral.is_ready());
+
+        // 3. B computes the shared secret: z = scalar_multiplication(Qbe, Pae)
+        let mut z = vec![0; PPRZ_KEY_LEN];
+        assert!(self.my_private_ephemeral.is_ready());
+        assert_eq!(
+            curve25519_crypto_scalarmult(
+                z.as_mut_slice(),
+                &self.my_private_ephemeral.privkey,
+                &self.their_public_ephemeral.pubkey,
+            ),
+            Ok(())
+        );
+
+        // 4. B uses the key derivation function kdf(z,1) to compute Kb || Sb, kdf(z,0) to
+        // compute Ka || Sa.
+        // kdf(z,partyIdent) = SHA512( 0 || z || partyIdent)
+        // (0 for A, 1 for B)
+
+        // kdf(z,0) to compute Ka || Sa
+        let mut ka_sa = vec![0; PPRZ_HASH_LEN];
+        let mut input = z.clone();
+        input.push(StsParty::Initiator as u8);
+        assert_eq!(
+            sha2_512_hash(ka_sa.as_mut_slice(), input.as_slice()),
+            Ok(())
+        );
+
+        // update RX key
+        self.rx_sym_key
+            .set(
+                &ka_sa[0..PPRZ_KEY_LEN], // key
+                &ka_sa[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
+                0, // set counter to zero
+            )
+            .unwrap(); // shouldn't fail
+
+        // kdf(z,1) to compute Kb || Sb
+        let mut kb_sb = vec![0; PPRZ_HASH_LEN];
+        let mut input = z.clone();
+        input.push(StsParty::Responder as u8);
+        assert_eq!(
+            sha2_512_hash(kb_sb.as_mut_slice(), input.as_slice()),
+            Ok(())
+        );
+
+        // update TX key
+        self.tx_sym_key
+            .set(
+                &kb_sb[0..PPRZ_KEY_LEN], // key
+                &kb_sb[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
+                0, // set counter to zero
+            )
+            .unwrap(); // shouldn't fail
+
+        // 5. B computes the ed25519 signature: sig = signQb(Pbe || Pae)
+        let mut sig = vec![0; PPRZ_SIGN_LEN];
+        let mut pbe_pae = vec![];
+        pbe_pae.extend_from_slice(&self.my_private_ephemeral.pubkey);
+        pbe_pae.extend_from_slice(&self.their_public_ephemeral.pubkey);
+        assert_eq!(
+            ed25519_sign(
+                sig.as_mut_slice(),
+                &self.my_private_key.privkey,
+                pbe_pae.as_slice(),
+            ),
+            Ok(())
+        );
+
+        // 6. B computes and sends the message Pbe || Ekey=Kb,IV=Sb||zero(sig);
+        // update intermediate fields
+        let auth = vec![];
+        let mut ciphertext = vec![0; PPRZ_SIGN_LEN];
+        let mut tag: [u8; PPRZ_MAC_LEN] = [0; PPRZ_MAC_LEN];
+        let mut msg_data =
+            Vec::with_capacity(PPRZ_KEY_LEN + ciphertext.len() + PPRZ_CRYPTO_OVERHEAD);
+        match chacha20poly1305_aead_encrypt(
+            &mut ciphertext,
+            &mut tag,
+            &sig,
+            &auth,
+            &self.tx_sym_key.key,
+            &self.tx_sym_key.nonce,
+        ) {
+            Ok(val) => {
+                if val {
+                    msg_data.extend_from_slice(&self.my_private_ephemeral.pubkey); // P_be
+                    msg_data.extend_from_slice(&ciphertext); // encrypted signature
+                    msg_data.extend_from_slice(&tag); // tag
+                }
+            }
+            Err(msg) => return Err(msg),
+        };
+
+        assert_eq!(msg_data.len(), PPRZ_KEY_LEN + PPRZ_SIGN_LEN);
+
+        // access the dictionary and create a message.
+        let mut msg2;
+        match self.dictionary {
+            Some(ref dict) => {
+                msg2 = dict.find_msg_by_name(&"KEY_EXCHANGE_UAV").unwrap();
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // update message
+        msg2.set_sender(self.sender_id);
+        msg2.set_destinaton(self.destination_id);
+        msg2.update_single_field("msg_type", PprzMsgBaseType::Uint8(StsMsgType::P_BE as u8));
+        msg2.update_single_field("msg_data", PprzMsgBaseType::Uint8Arr(msg_data));
+
+        // make sure the message is in the whitelist
+        if !self.allowed_msg_ids.contains(&msg2.id) {
+            self.allowed_msg_ids.push(msg2.id);
+        }
+
+        // save for later use
+        self.msg2 = Some(msg2.to_bytes());
+
+        Ok(())
+    }
+
+    /// NOTE: for INITIATOR party only
+    /// Process incoming message (expected MSG2)
+    /// if the right (KEY_EXCHANGE) message received with the right data (P_BE)
+    /// and the right P_BE.len=PPRZ_KEY_LEN+PPRZ_SIGN_LEN+PPRZ_MAC_LEN, the internal state of Sts gets updated
+    /// (key derivation etc), and msg3 is prepared to be sent.
+    /// Input: decrypted message (source_ID .. msg payload)
+    /// Returns either `Ok()` if the message3 was sucessfully prepared or an Error string
+    ///
+    /// Note the generated message has a format of:
+    /// Pprzlink 2.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] destination ID
+    /// payload[2] class/component
+    /// payload[3] MSG_ID
+    /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    fn sts_process_mgs2(&mut self, payload: &[u8]) -> Result<(), String> {
+        // check if the incoming message is really KEY_EXCHANGE_UAV
+        let mut msg;
+        match self.dictionary {
+            Some(ref dict) => {
+                let name = dict.get_msg_name(
+                    self.rx_msg_class,
+                    PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
+                ).expect("thread main: message name not found");
+                if name != "KEY_EXCHANGE_UAV" {
+                    let s = String::from(
+                        "Error, received message is not KEY_EXCHANGE_UAV, but ",
+                    ) + &name;
+                    return Err(s);
+                }
+                msg = dict.find_msg_by_name(&name).expect(
+                    "thread main: no message found",
+                );
+                // update message fields with real values
+                msg.update(payload);
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // check if the message has the correct type and value
+        match msg.get_single_field("msg_type") {
+            Some(f) => {
+                // see if it is P_AE and pass though if it is
+                if let PprzMsgBaseType::Uint8(a) = f {
+                    if a != StsMsgType::P_BE as u8 {
+                        return Err(String::from("Error: msg_type != P_BE"));
+                    }
+                } else {
+                    return Err(String::from("Error: msg_type != PprzMsgBaseType::Uint8(a)"));
+                }
+            }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_type' field"));
+            }
+        }
+
+        //  check if the message data are the correct length and value
+        let msg2;
+        match msg.get_single_field("msg_data") {
+            Some(f) => {
+                // see if it is uint8[] and pass though if it is
+                if let PprzMsgBaseType::Uint8Arr(a) = f {
+                    if a.len() != (PPRZ_KEY_LEN + PPRZ_SIGN_LEN + PPRZ_MAC_LEN) {
+                        return Err(String::from(
+                            "Error: msg_data.len != (PPRZ_KEY_LEN+PPRZ_SIGN_LEN+PPRZ_MAC_LEN)",
+                        ));
+                    } else {
+                        // all good
+                        msg2 = a;
+                    }
+                } else {
+                    return Err(String::from(
+                        "Error: msg_data != PprzMsgBaseType::Uint8Arr(a)",
+                    ));
+                }
+            }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_data' field"));
+            }
+        }
+        self.their_public_ephemeral
+            .set(&msg2[0..PPRZ_KEY_LEN])
+            .unwrap();
+        assert!(self.their_public_ephemeral.is_ready());
+
+        // 7. A computes the shared secret: z = scalar_mseultiplication(Qae, Pbe)
+        let mut z = vec![0; PPRZ_KEY_LEN];
+        assert_eq!(
+            curve25519_crypto_scalarmult(
+                z.as_mut_slice(),
+                &self.my_private_ephemeral.pubkey,
+                &self.their_public_ephemeral.pubkey,
+            ),
+            Ok(())
+        );
+
+        // 8. A uses the key derivation function kdf(z,1) to compute Kb || Sb, kdf(z,0) to
+        // compute Ka || Sa.
+        // kdf(z,partyIdent) = SHA512( 0 || z || partyIdent)
+        // (0 for A, 1 for B)
+
+        // kdf(z,0) to compute Ka || Sa
+        let mut ka_sa = vec![0; PPRZ_HASH_LEN];
+        let mut input = z.clone();
+        input.push(StsParty::Initiator as u8);
+        assert_eq!(
+            sha2_512_hash(ka_sa.as_mut_slice(), input.as_slice()),
+            Ok(())
+        );
+
+        // update TX key
+        self.tx_sym_key
+            .set(
+                &ka_sa[0..PPRZ_KEY_LEN], // key
+                &ka_sa[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
+                0, // set counter to zero
+            )
+            .unwrap(); // shouldn't fail
+
+        // kdf(z,1) to compute Kb || Sb
+        let mut kb_sb = vec![0; PPRZ_HASH_LEN];
+        let mut input = z.clone();
+        input.push(StsParty::Responder as u8);
+        assert_eq!(
+            sha2_512_hash(kb_sb.as_mut_slice(), input.as_slice()),
+            Ok(())
+        );
+
+        // update RX key
+        self.rx_sym_key
+            .set(
+                &kb_sb[0..PPRZ_KEY_LEN], // key
+                &kb_sb[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
+                0, // set counter to zero
+            )
+            .unwrap(); // shouldn't fail
+
+        // A decrypts the remainder of the message, verifies the signature.
+        let auth = vec![];
+        let ciphertext = &msg2[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_SIGN_LEN];
+        let mut signature: [u8; PPRZ_SIGN_LEN] = [0; PPRZ_SIGN_LEN];
+        let tag = &msg2[PPRZ_KEY_LEN + PPRZ_SIGN_LEN..PPRZ_KEY_LEN + PPRZ_SIGN_LEN + PPRZ_MAC_LEN];
+        match chacha20poly1305_aead_decrypt(
+            &mut signature,
+            &tag,
+            &ciphertext,
+            &auth,
+            &self.rx_sym_key.key,
+            &self.rx_sym_key.nonce,
+        ) {
+            Ok(val) => {
+                if val {
+                    // decryption was sucessfull, verify the signature
+                    // 9. A verifies the signature.");
+                    let mut pbe_pae = vec![];
+                    pbe_pae.extend_from_slice(&self.their_public_ephemeral.pubkey);
+                    pbe_pae.extend_from_slice(&self.my_private_ephemeral.pubkey);
+
+                    let success = match ed25519_verify(
+                        &self.their_public_ephemeral.pubkey,
+                        &pbe_pae,
+                        &signature,
+                    ) {
+                        Ok(val) => val,
+                        Err(msg) => panic!("Error! {}", msg),
+                    };
+                    assert_eq!(success, true);
+                    // A signature verified
+                }
+            }
+            Err(msg) => return Err(msg),
+        };
+
+        // 10. A computes the ed25519 signature: sig = signQa(Pae || Pbe)
+        let mut sig = vec![0; PPRZ_SIGN_LEN];
+        let mut pae_pbe = vec![];
+        pae_pbe.extend_from_slice(&self.my_private_ephemeral.pubkey);
+        pae_pbe.extend_from_slice(&self.their_public_ephemeral.pubkey);
+        assert_eq!(
+            ed25519_sign(
+                sig.as_mut_slice(),
+                &self.my_private_key.privkey,
+                pae_pbe.as_slice(),
+            ),
+            Ok(())
+        );
+
+        // 11. A computes and sends the message Ekey=Ka,IV=Sa||zero(sig)
+        let auth = vec![];
+        let mut ciphertext = vec![0; PPRZ_SIGN_LEN];
+        let mut tag: [u8; PPRZ_MAC_LEN] = [0; PPRZ_MAC_LEN];
+        let mut msg_data =
+            Vec::with_capacity(PPRZ_KEY_LEN + ciphertext.len() + PPRZ_CRYPTO_OVERHEAD);
+        match chacha20poly1305_aead_encrypt(
+            &mut ciphertext,
+            &mut tag,
+            &sig,
+            &auth,
+            &self.tx_sym_key.key,
+            &self.tx_sym_key.nonce,
+        ) {
+            Ok(val) => {
+                if val {
+                    msg_data.extend_from_slice(&ciphertext); // encrypted signature
+                    msg_data.extend_from_slice(&tag); // tag
+                }
+            }
+            Err(msg) => return Err(msg),
+        };
+
+        // access the dictionary and create a message.
+        let mut msg3;
+        match self.dictionary {
+            Some(ref dict) => {
+                msg3 = dict.find_msg_by_name(&"KEY_EXCHANGE_GCS").unwrap();
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // update message
+        msg3.set_sender(self.sender_id);
+        msg3.set_destinaton(self.destination_id);
+        msg3.update_single_field("msg_type", PprzMsgBaseType::Uint8(StsMsgType::SIG as u8));
+        msg3.update_single_field("msg_data", PprzMsgBaseType::Uint8Arr(msg_data));
+
+        // make sure the message is in the whitelist
+        if !self.allowed_msg_ids.contains(&msg3.id) {
+            self.allowed_msg_ids.push(msg3.id);
+        }
+
+        // save for later use
+        self.msg3 = Some(msg3.to_bytes());
+
+        Ok(())
+    }
+
+    /// NOTE: for RESPONDER party only
+    /// Process incoming message (expected MSG3)
+    /// if the right (KEY_EXCHANGE) message received with the right data (SIG)
+    /// and the right SIG.len=PPRZ_SIGN_LEN, and the signature is verified, Ok() is returned.
+    /// Input: decrypted message (source_ID .. msg payload)
+    /// Returns either `Ok()` if this party is ready for ongoing communication
+    fn sts_process_mgs3(&mut self, payload: &[u8]) -> Result<(), String> {
+        // check if the incoming message is really KEY_EXCHANGE_GCS
+        let mut msg;
+        match self.dictionary {
+            Some(ref dict) => {
+                let name = dict.get_msg_name(
+                    self.rx_msg_class,
+                    PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
+                ).expect("thread main: message name not found");
+                if name != "KEY_EXCHANGE_GCS" {
+                    let s = String::from(
+                        "Error, received message is not KEY_EXCHANGE_GCS, but ",
+                    ) + &name;
+                    return Err(s);
+                }
+                msg = dict.find_msg_by_name(&name).expect(
+                    "thread main: no message found",
+                );
+                // update message fields with real values
+                msg.update(payload);
+            }
+            None => panic!("Error: Dictionary not provided!"),
+        }
+
+        // check if the message has the correct type and value
+        match msg.get_single_field("msg_type") {
+            Some(f) => {
+                // see if it is SIG and pass though if it is
+                if let PprzMsgBaseType::Uint8(a) = f {
+                    if a != StsMsgType::SIG as u8 {
+                        return Err(String::from("Error: msg_type != SIG"));
+                    }
+                } else {
+                    return Err(String::from("Error: msg_type != PprzMsgBaseType::Uint8(a)"));
+                }
+            }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_type' field"));
+            }
+        }
+
+        //  check if the message data are the correct length and value
+        let msg3;
+        match msg.get_single_field("msg_data") {
+            Some(f) => {
+                // see if it is uint8[] and pass though if it is
+                if let PprzMsgBaseType::Uint8Arr(a) = f {
+                    if a.len() != (PPRZ_KEY_LEN + PPRZ_MAC_LEN) {
+                        return Err(String::from(
+                            "Error: msg_data.len != PPRZ_SIG_LEN + PPRZ_MAC_LEN",
+                        ));
+                    } else {
+                        // all good
+                        msg3 = a;
+                    }
+                } else {
+                    return Err(String::from(
+                        "Error: msg_data != PprzMsgBaseType::Uint8Arr(a)",
+                    ));
+                }
+            }
+            None => {
+                return Err(String::from("Error: message doesn't have 'msg_data' field"));
+            }
+        }
+
+        // 13. B decrypts the message and verifies the signature.
+        let auth = vec![];
+        let ciphertext = &msg3[0..PPRZ_SIGN_LEN];
+        let mut signature: [u8; PPRZ_SIGN_LEN] = [0; PPRZ_SIGN_LEN];
+        let tag = &msg3[PPRZ_SIGN_LEN..PPRZ_SIGN_LEN + PPRZ_MAC_LEN];
+        match chacha20poly1305_aead_decrypt(
+            &mut signature,
+            &tag,
+            &ciphertext,
+            &auth,
+            &self.rx_sym_key.key,
+            &self.rx_sym_key.nonce,
+        ) {
+            Ok(val) => {
+                if val {
+                    // decryption was sucessfull, verify the signature
+                    let mut pae_pbe = vec![];
+                    pae_pbe.extend_from_slice(&self.their_public_ephemeral.pubkey);
+                    pae_pbe.extend_from_slice(&self.my_private_ephemeral.pubkey);
+
+                    let success = match ed25519_verify(
+                        &self.their_public_ephemeral.pubkey,
+                        &pae_pbe,
+                        &signature,
+                    ) {
+                        Ok(val) => val,
+                        Err(msg) => panic!("Error! {}", msg),
+                    };
+                    assert_eq!(success, true);
+                    // signature verified
+                }
+            }
+            Err(msg) => return Err(msg),
+        };
+
+        Ok(())
     }
 }
 
@@ -653,10 +1356,6 @@ impl GecPubKey {
     }
 }
 
-struct Ed25519Signature {
-    pub sign: [u8; PPRZ_SIGN_LEN],
-}
-
 /// Party type
 #[derive(Debug)]
 pub enum StsParty {
@@ -692,12 +1391,15 @@ enum StsMsgType {
 enum StsError {
     ERROR_NONE,
     // RESPONDER ERRORS
+    MSG1_ERROR,
     MSG1_TIMEOUT_ERROR,
     MSG1_ENCRYPT_ERROR,
+    MSG3_ERROR,
     MSG3_TIMEOUT_ERROR,
     MSG3_DECRYPT_ERROR,
     MSG3_SIGNVERIFY_ERROR,
     // INITIATOR ERRORS
+    MSG2_ERROR,
     MSG2_TIMEOUT_ERROR,
     MSG2_DECRYPT_ERROR,
     MSG2_SIGNVERIFY_ERROR,
