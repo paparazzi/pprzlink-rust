@@ -16,6 +16,11 @@ use parser::V2_MSG_ID;
 const PPRZ_MSG_TYPE_PLAINTEXT: u8 = 0xaa;
 const PPRZ_MSG_TYPE_ENCRYPTED: u8 = 0x55;
 
+/// TODO: a hack to to allow passing the key exchage messages before
+/// secure comlink is established 
+const KEY_EXCHANGE_MSG_ID_UAV: u8 = 239;
+const KEY_EXCHANGE_MSG_ID_GCS: u8 = 159;
+
 // ENCRYPTED MSG:
 // 0 crypto/plaintext byte
 // 1 counter MSB 1 {big-endian}
@@ -70,7 +75,7 @@ const PPRZ_CURVE_BASEPOINT: u8 = 9;
 
 /// Container for a symmetric key
 #[derive(Debug)]
-struct GecSymKey {
+pub struct GecSymKey {
     key: [u8; PPRZ_KEY_LEN],
     nonce: [u8; PPRZ_NONCE_LEN],
     ctr: u32,
@@ -151,27 +156,27 @@ pub struct SecurePprzTransport {
     /// list of whitelisted message IDs
     pub allowed_msg_ids: Vec<u8>,
     /// symmetric session key for incoming messages
-    rx_sym_key: GecSymKey,
+    pub rx_sym_key: GecSymKey,
     /// symmetric session key for outgoing messages
-    tx_sym_key: GecSymKey,
+    pub tx_sym_key: GecSymKey,
     /// set STS party
     party: StsParty,
     /// set STS stage
     stage: StsStage,
     /// mark last STS error
-    last_error: StsError,
+    pub last_error: StsError,
     /// last error message
-    last_error_message: String,
+    pub last_error_message: String,
     /// remote party's public key
-    their_public_key: GecPubKey,
+    pub their_public_key: GecPubKey,
     /// local private key
-    my_private_key: GecPrivKey,
+    pub my_private_key: GecPrivKey,
     /// remote party's ephemeral key for STS
-    their_public_ephemeral: GecPubKey,
+    pub their_public_ephemeral: GecPubKey,
     /// local private key for STS
-    my_private_ephemeral: GecPrivKey,
+    pub my_private_ephemeral: GecPrivKey,
     /// pprz dictionary for sending KEY_EXCHANGE and other messages
-    dictionary: Option<Arc<PprzDictionary>>,
+    pub dictionary: Option<Arc<PprzDictionary>>,
     /// destination ID for the messages
     destination_id: u8,
     /// sender ID for the messages
@@ -194,7 +199,7 @@ impl SecurePprzTransport {
         SecurePprzTransport {
             rx: PprzTransport::new(),
             tx: PprzTransport::new(),
-            allowed_msg_ids: vec![],
+            allowed_msg_ids: vec![KEY_EXCHANGE_MSG_ID_UAV, KEY_EXCHANGE_MSG_ID_GCS],
             rx_sym_key: GecSymKey::new(),
             tx_sym_key: GecSymKey::new(),
             party: party,
@@ -218,6 +223,11 @@ impl SecurePprzTransport {
     /// set the message class for incoming messages
     pub fn set_msg_class(&mut self, msg_class: PprzMsgClassID) {
         self.rx_msg_class = msg_class;
+    }
+    
+    /// get current stage
+    pub fn get_stage(&self) -> &StsStage {
+    	&self.stage
     }
 
     /// set the destination ID for the messages
@@ -267,7 +277,7 @@ impl SecurePprzTransport {
         let counter_as_bytes = pprzlink_counter_to_bytes(counter);
 
         // update nonce
-        self.rx_sym_key.nonce[0..4].clone_from_slice(&counter_as_bytes);
+        self.tx_sym_key.nonce[0..4].clone_from_slice(&counter_as_bytes);
 
         // update intermediate fields
         let auth: &[u8] = &payload[0..PPRZ_AUTH_LEN];
@@ -473,7 +483,7 @@ impl SecurePprzTransport {
             }
             StsStage::WaitMsg1 => {
                 match self.party {
-                    StsParty::Initiator => {} // shouldn't be here
+                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
                     StsParty::Responder => {
                         // B sends the message Pbe || Ekey=Kb,IV=Sb||zero(sig)
                         let msg = self.msg2.clone();
@@ -500,17 +510,17 @@ impl SecurePprzTransport {
                         }
                         return None;
                     }
-                    StsParty::Responder => {} // shouldn't be here
+                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here
                 }
             }
             StsStage::WaitMsg3 => {
                 match self.party {
-                    StsParty::Initiator => {} // shouldn't be here
-                    StsParty::Responder => {} // shouldn't be here either
+                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
+                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here either
                 }
             }
         }
-        None
+        //None
     }
 
 
@@ -544,12 +554,14 @@ impl SecurePprzTransport {
                             return None;
                         }
                     }
+                } else {
+                	return None;
                 }
             }
-            StsStage::Init => {} // shouldn't be here
+            StsStage::Init => {return None;} // do nothing and wait for init
             StsStage::WaitMsg1 => {
                 match self.party {
-                    StsParty::Initiator => {} // shouldn't be here
+                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
                     StsParty::Responder => {
                         // process msg1
                         if self.rx.parse_byte(b) {
@@ -580,6 +592,8 @@ impl SecurePprzTransport {
                                     return None;
                                 }
                             }
+                        } else {
+                        	return None;
                         }
                     }
                 }
@@ -615,14 +629,16 @@ impl SecurePprzTransport {
                                     return None;
                                 }
                             }
+                        } else {
+                        	return None;
                         }
                     }
-                    StsParty::Responder => {} 
+                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here 
                 }
             }
             StsStage::WaitMsg3 => {
                 match self.party {
-                    StsParty::Initiator => {}
+                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
                     StsParty::Responder => {
                         // process msg3
                         if self.rx.parse_byte(b) {
@@ -652,12 +668,13 @@ impl SecurePprzTransport {
                                     return None;
                                 }
                             }
+                        } else {
+                        	return None;
                         }
                     }
                 }
             }
         }
-        None
     }
 
     /// Generate ephemeral curve25519 key pair (Pbe, Qbe).
@@ -693,6 +710,8 @@ impl SecurePprzTransport {
     /// ```
     fn sts_initiate_msg(&mut self) -> Vec<u8> {
         assert!(self.my_private_ephemeral.is_ready());
+        assert!(self.my_private_key.is_ready());
+        assert!(self.their_public_key.is_ready());
 
         // access the dictionary and create a message.
         let mut msg1;
@@ -738,6 +757,9 @@ impl SecurePprzTransport {
     /// payload[4-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs1(&mut self, payload: &[u8]) -> Result<(), String> {
+    	assert!(self.my_private_ephemeral.is_ready());
+    	assert!(self.my_private_key.is_ready());
+        assert!(self.their_public_key.is_ready());
         // check if the incoming message is really KEY_EXCHANGE_GCS
         let mut msg;
         match self.dictionary {
@@ -893,7 +915,7 @@ impl SecurePprzTransport {
             Err(msg) => return Err(msg),
         };
 
-        assert_eq!(msg_data.len(), PPRZ_KEY_LEN + PPRZ_SIGN_LEN);
+        assert_eq!(msg_data.len(), PPRZ_KEY_LEN + PPRZ_SIGN_LEN + PPRZ_MAC_LEN);
 
         // access the dictionary and create a message.
         let mut msg2;
@@ -939,6 +961,9 @@ impl SecurePprzTransport {
     /// payload[4-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs2(&mut self, payload: &[u8]) -> Result<(), String> {
+    	assert!(self.my_private_key.is_ready());
+        assert!(self.their_public_key.is_ready());
+        assert!(self.my_private_ephemeral.is_ready());
         // check if the incoming message is really KEY_EXCHANGE_UAV
         let mut msg;
         match self.dictionary {
@@ -1013,7 +1038,7 @@ impl SecurePprzTransport {
         assert_eq!(
             curve25519_crypto_scalarmult(
                 z.as_mut_slice(),
-                &self.my_private_ephemeral.pubkey,
+                &self.my_private_ephemeral.privkey,
                 &self.their_public_ephemeral.pubkey,
             ),
             Ok(())
@@ -1082,7 +1107,7 @@ impl SecurePprzTransport {
                     pbe_pae.extend_from_slice(&self.my_private_ephemeral.pubkey);
 
                     let success = match ed25519_verify(
-                        &self.their_public_ephemeral.pubkey,
+                        &self.their_public_key.pubkey,
                         &pbe_pae,
                         &signature,
                     ) {
@@ -1166,6 +1191,10 @@ impl SecurePprzTransport {
     /// Input: decrypted message (source_ID .. msg payload)
     /// Returns either `Ok()` if this party is ready for ongoing communication
     fn sts_process_mgs3(&mut self, payload: &[u8]) -> Result<(), String> {
+    	assert!(self.my_private_key.is_ready());
+        assert!(self.their_public_key.is_ready());
+        assert!(self.my_private_ephemeral.is_ready());
+        assert!(self.their_public_ephemeral.is_ready());
         // check if the incoming message is really KEY_EXCHANGE_GCS
         let mut msg;
         match self.dictionary {
@@ -1212,7 +1241,8 @@ impl SecurePprzTransport {
             Some(f) => {
                 // see if it is uint8[] and pass though if it is
                 if let PprzMsgBaseType::Uint8Arr(a) = f {
-                    if a.len() != (PPRZ_KEY_LEN + PPRZ_MAC_LEN) {
+                	assert_eq!(a.len(),(PPRZ_SIGN_LEN + PPRZ_MAC_LEN));
+                    if a.len() != (PPRZ_SIGN_LEN + PPRZ_MAC_LEN) {
                         return Err(String::from(
                             "Error: msg_data.len != PPRZ_SIG_LEN + PPRZ_MAC_LEN",
                         ));
@@ -1252,7 +1282,7 @@ impl SecurePprzTransport {
                     pae_pbe.extend_from_slice(&self.my_private_ephemeral.pubkey);
 
                     let success = match ed25519_verify(
-                        &self.their_public_ephemeral.pubkey,
+                        &self.their_public_key.pubkey,
                         &pae_pbe,
                         &signature,
                     ) {
@@ -1275,7 +1305,7 @@ impl SecurePprzTransport {
 /// Contains both public key P_a and
 /// private key Q_a
 #[derive(Debug)]
-struct GecPrivKey {
+pub struct GecPrivKey {
     privkey: [u8; PPRZ_KEY_LEN],
     pubkey: [u8; PPRZ_KEY_LEN],
     ready: bool,
@@ -1304,9 +1334,9 @@ impl GecPrivKey {
                 "GecPrivKey update Error: q.len() != PPRZ_KEY_LEN",
             ));
         }
-        if p.len() != PPRZ_NONCE_LEN {
+        if p.len() != PPRZ_KEY_LEN {
             return Err(String::from(
-                "GecPrivKey update Error: p.len() != PPRZ_NONCE_LEN",
+                "GecPrivKey update Error: p.len() != PPRZ_KEY_LEN",
             ));
         }
 
@@ -1322,7 +1352,7 @@ impl GecPrivKey {
 /// Public key container
 /// Contains public key P_b
 #[derive(Debug)]
-struct GecPubKey {
+pub struct GecPubKey {
     pubkey: [u8; PPRZ_KEY_LEN],
     ready: bool,
 }
@@ -1344,9 +1374,9 @@ impl GecPubKey {
 
     #[allow(dead_code)]
     pub fn set(&mut self, p: &[u8]) -> Result<(), String> {
-        if p.len() != PPRZ_NONCE_LEN {
+        if p.len() != PPRZ_KEY_LEN {
             return Err(String::from(
-                "GecPubKey update Error: p.len() != PPRZ_NONCE_LEN",
+                "GecPubKey update Error: p.len() != PPRZ_KEY_LEN",
             ));
         }
         self.pubkey.clone_from_slice(p);
@@ -1367,7 +1397,7 @@ pub enum StsParty {
 #[allow(dead_code)]
 #[derive(Debug)]
 #[derive(PartialEq)]
-enum StsStage {
+pub enum StsStage {
     Init,
     WaitMsg1,
     WaitMsg2,
@@ -1388,7 +1418,7 @@ enum StsMsgType {
 /// key exchange error
 #[allow(non_camel_case_types, dead_code)]
 #[derive(Debug)]
-enum StsError {
+pub enum StsError {
     ERROR_NONE,
     // RESPONDER ERRORS
     MSG1_ERROR,
