@@ -53,7 +53,7 @@ impl PprzTransport {
                 if b == PPRZ_STX {
                     self.reset();
                     self.state = PprzParserState::GotSTX;
-                    //println!("Got STX");
+                //println!("Got STX");
                 } else {
                     self.hdr_err += 1;
                 }
@@ -61,11 +61,11 @@ impl PprzTransport {
             PprzParserState::GotSTX => {
                 // minimal size of a message is 6
                 if b >= 6 {
-                	self.length = b - 4;
+                    self.length = b - 4;
                     self.ck_a = b;
                     self.ck_b = b;
                     self.state = PprzParserState::GotLength;
-                    //println!("Got length of {}",b);
+                //println!("Got length of {}",b);
 
                 } else {
                     self.hdr_err += 1;
@@ -79,7 +79,7 @@ impl PprzTransport {
                 self.ck_a = self.ck_a.wrapping_add(b);
                 self.ck_b = self.ck_b.wrapping_add(self.ck_a);
                 if self.buf.len() == self.length as usize {
-                	//println!("Got payload");
+                    //println!("Got payload");
                     self.state = PprzParserState::GotPayload;
                 }
             }
@@ -87,7 +87,7 @@ impl PprzTransport {
                 if self.ck_a == b {
                     self.state = PprzParserState::GotCRC1;
                 } else {
-                	//println!("self.ck_a = 0x{:x}, b=0x{:x}",self.ck_a,b);
+                    //println!("self.ck_a = 0x{:x}, b=0x{:x}",self.ck_a,b);
                     self.state = PprzParserState::WaitSTX;
                 }
             }

@@ -17,7 +17,7 @@ const PPRZ_MSG_TYPE_PLAINTEXT: u8 = 0xaa;
 const PPRZ_MSG_TYPE_ENCRYPTED: u8 = 0x55;
 
 /// TODO: a hack to to allow passing the key exchage messages before
-/// secure comlink is established 
+/// secure comlink is established
 const KEY_EXCHANGE_MSG_ID_UAV: u8 = 239;
 const KEY_EXCHANGE_MSG_ID_GCS: u8 = 159;
 
@@ -224,10 +224,10 @@ impl SecurePprzTransport {
     pub fn set_msg_class(&mut self, msg_class: PprzMsgClassID) {
         self.rx_msg_class = msg_class;
     }
-    
+
     /// get current stage
     pub fn get_stage(&self) -> &StsStage {
-    	&self.stage
+        &self.stage
     }
 
     /// set the destination ID for the messages
@@ -483,7 +483,7 @@ impl SecurePprzTransport {
             }
             StsStage::WaitMsg1 => {
                 match self.party {
-                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
+                    StsParty::Initiator => panic!("Shouldn't be here"), // shouldn't be here
                     StsParty::Responder => {
                         // B sends the message Pbe || Ekey=Kb,IV=Sb||zero(sig)
                         let msg = self.msg2.clone();
@@ -510,13 +510,13 @@ impl SecurePprzTransport {
                         }
                         return None;
                     }
-                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here
+                    StsParty::Responder => panic!("Shouldn't be here"), // shouldn't be here
                 }
             }
             StsStage::WaitMsg3 => {
                 match self.party {
-                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
-                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here either
+                    StsParty::Initiator => panic!("Shouldn't be here"), // shouldn't be here
+                    StsParty::Responder => panic!("Shouldn't be here"), // shouldn't be here either
                 }
             }
         }
@@ -555,13 +555,15 @@ impl SecurePprzTransport {
                         }
                     }
                 } else {
-                	return None;
+                    return None;
                 }
             }
-            StsStage::Init => {return None;} // do nothing and wait for init
+            StsStage::Init => {
+                return None;
+            } // do nothing and wait for init
             StsStage::WaitMsg1 => {
                 match self.party {
-                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
+                    StsParty::Initiator => panic!("Shouldn't be here"), // shouldn't be here
                     StsParty::Responder => {
                         // process msg1
                         if self.rx.parse_byte(b) {
@@ -593,7 +595,7 @@ impl SecurePprzTransport {
                                 }
                             }
                         } else {
-                        	return None;
+                            return None;
                         }
                     }
                 }
@@ -630,15 +632,15 @@ impl SecurePprzTransport {
                                 }
                             }
                         } else {
-                        	return None;
+                            return None;
                         }
                     }
-                    StsParty::Responder => {panic!("Shouldn't be here")} // shouldn't be here 
+                    StsParty::Responder => panic!("Shouldn't be here"), // shouldn't be here
                 }
             }
             StsStage::WaitMsg3 => {
                 match self.party {
-                    StsParty::Initiator => {panic!("Shouldn't be here")} // shouldn't be here
+                    StsParty::Initiator => panic!("Shouldn't be here"), // shouldn't be here
                     StsParty::Responder => {
                         // process msg3
                         if self.rx.parse_byte(b) {
@@ -669,7 +671,7 @@ impl SecurePprzTransport {
                                 }
                             }
                         } else {
-                        	return None;
+                            return None;
                         }
                     }
                 }
@@ -757,8 +759,8 @@ impl SecurePprzTransport {
     /// payload[4-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs1(&mut self, payload: &[u8]) -> Result<(), String> {
-    	assert!(self.my_private_ephemeral.is_ready());
-    	assert!(self.my_private_key.is_ready());
+        assert!(self.my_private_ephemeral.is_ready());
+        assert!(self.my_private_key.is_ready());
         assert!(self.their_public_key.is_ready());
         // check if the incoming message is really KEY_EXCHANGE_GCS
         let mut msg;
@@ -961,7 +963,7 @@ impl SecurePprzTransport {
     /// payload[4-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs2(&mut self, payload: &[u8]) -> Result<(), String> {
-    	assert!(self.my_private_key.is_ready());
+        assert!(self.my_private_key.is_ready());
         assert!(self.their_public_key.is_ready());
         assert!(self.my_private_ephemeral.is_ready());
         // check if the incoming message is really KEY_EXCHANGE_UAV
@@ -1106,14 +1108,11 @@ impl SecurePprzTransport {
                     pbe_pae.extend_from_slice(&self.their_public_ephemeral.pubkey);
                     pbe_pae.extend_from_slice(&self.my_private_ephemeral.pubkey);
 
-                    let success = match ed25519_verify(
-                        &self.their_public_key.pubkey,
-                        &pbe_pae,
-                        &signature,
-                    ) {
-                        Ok(val) => val,
-                        Err(msg) => panic!("Error! {}", msg),
-                    };
+                    let success =
+                        match ed25519_verify(&self.their_public_key.pubkey, &pbe_pae, &signature) {
+                            Ok(val) => val,
+                            Err(msg) => panic!("Error! {}", msg),
+                        };
                     assert_eq!(success, true);
                     // A signature verified
                 }
@@ -1191,7 +1190,7 @@ impl SecurePprzTransport {
     /// Input: decrypted message (source_ID .. msg payload)
     /// Returns either `Ok()` if this party is ready for ongoing communication
     fn sts_process_mgs3(&mut self, payload: &[u8]) -> Result<(), String> {
-    	assert!(self.my_private_key.is_ready());
+        assert!(self.my_private_key.is_ready());
         assert!(self.their_public_key.is_ready());
         assert!(self.my_private_ephemeral.is_ready());
         assert!(self.their_public_ephemeral.is_ready());
@@ -1241,7 +1240,7 @@ impl SecurePprzTransport {
             Some(f) => {
                 // see if it is uint8[] and pass though if it is
                 if let PprzMsgBaseType::Uint8Arr(a) = f {
-                	assert_eq!(a.len(),(PPRZ_SIGN_LEN + PPRZ_MAC_LEN));
+                    assert_eq!(a.len(), (PPRZ_SIGN_LEN + PPRZ_MAC_LEN));
                     if a.len() != (PPRZ_SIGN_LEN + PPRZ_MAC_LEN) {
                         return Err(String::from(
                             "Error: msg_data.len != PPRZ_SIG_LEN + PPRZ_MAC_LEN",
@@ -1281,14 +1280,11 @@ impl SecurePprzTransport {
                     pae_pbe.extend_from_slice(&self.their_public_ephemeral.pubkey);
                     pae_pbe.extend_from_slice(&self.my_private_ephemeral.pubkey);
 
-                    let success = match ed25519_verify(
-                        &self.their_public_key.pubkey,
-                        &pae_pbe,
-                        &signature,
-                    ) {
-                        Ok(val) => val,
-                        Err(msg) => panic!("Error! {}", msg),
-                    };
+                    let success =
+                        match ed25519_verify(&self.their_public_key.pubkey, &pae_pbe, &signature) {
+                            Ok(val) => val,
+                            Err(msg) => panic!("Error! {}", msg),
+                        };
                     assert_eq!(success, true);
                     // signature verified
                 }
@@ -1511,61 +1507,14 @@ mod tests {
         assert_eq!(trans.decrypt_message(&buf).unwrap(), [1, 2, 4, 3]);
     }
 
-    static KEY: [u8; 32] = [
-        0x70,
-        0x03,
-        0xAA,
-        0x0A,
-        0x8E,
-        0xE9,
-        0xA8,
-        0xFF,
-        0xD5,
-        0x46,
-        0x1E,
-        0xEC,
-        0x7C,
-        0xC1,
-        0xC1,
-        0xA1,
-        0x6A,
-        0x43,
-        0xC9,
-        0xD4,
-        0xB3,
-        0x2B,
-        0x94,
-        0x7E,
-        0x76,
-        0xF9,
-        0xD8,
-        0xE8,
-        0x1A,
-        0x31,
-        0x5D,
-        0xA8,
-    ];
+    static KEY: [u8; 32] = [0x70, 0x03, 0xAA, 0x0A, 0x8E, 0xE9, 0xA8, 0xFF, 0xD5, 0x46, 0x1E,
+                            0xEC, 0x7C, 0xC1, 0xC1, 0xA1, 0x6A, 0x43, 0xC9, 0xD4, 0xB3, 0x2B,
+                            0x94, 0x7E, 0x76, 0xF9, 0xD8, 0xE8, 0x1A, 0x31, 0x5D, 0xA8];
 
     static CIPHERTEXT: [u8; 2] = [0xa1, 0x7b];
     static PLAINTEXT: [u8; 2] = [4, 3];
     static AUTH: [u8; 2] = [1, 2];
-    static MAC: [u8; 16] = [
-        0x83,
-        0xf6,
-        0x95,
-        0x66,
-        0x4a,
-        0xa4,
-        0x82,
-        0x82,
-        0x12,
-        0xf0,
-        0x7f,
-        0xa1,
-        0xf,
-        0x92,
-        0x86,
-        0xea,
-    ];
+    static MAC: [u8; 16] = [0x83, 0xf6, 0x95, 0x66, 0x4a, 0xa4, 0x82, 0x82, 0x12, 0xf0, 0x7f,
+                            0xa1, 0xf, 0x92, 0x86, 0xea];
     static NONCE: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc];
 }
