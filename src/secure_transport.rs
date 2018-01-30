@@ -450,6 +450,7 @@ impl SecurePprzTransport {
                 match self.encrypt_message(payload) {
                     Ok(v) => {
                         // message encrypted sucessfully
+                        self.tx.reset(); // reset the underlying transport
                         self.tx.construct_pprz_msg(&v); // append STX and checksum
                         return Some(self.tx.buf.clone()); // return a message ready to be sent
                     }
