@@ -344,8 +344,11 @@ impl SecurePprzTransport {
 
                 // first check the message counter
                 let counter: &[u8] = &payload[PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN];
+                println!("couter bytes = {:?}",counter);
                 let counter_as_u32 =
                     pprzlink_bytes_to_counter(counter).expect("Error converting counter");
+                    
+                    println!("counter={}",counter_as_u32);
 
                 // check against the saved counter
                 if counter_as_u32 <= self.rx_sym_key.ctr {
@@ -472,6 +475,7 @@ impl SecurePprzTransport {
                         msg1 = self.pack_plaintext_message(&msg1).unwrap(); // add crypto byte (and pass whitelist)
                         self.tx.construct_pprz_msg(&msg1); // append STX and checksum
                         self.stage = StsStage::WaitMsg2; // update status
+                        println!("returning msg1, waiting msg2");
                         return Some(self.tx.buf.clone()); // return a message ready to be sent
                     }
                     StsParty::Responder => {
@@ -501,12 +505,32 @@ impl SecurePprzTransport {
             StsStage::WaitMsg2 => {
                 match self.party {
                     StsParty::Initiator => {
+                        println!("sts->my_private_key: {:?}", self.my_private_key);
+                        println!("sts->their_public_key: {:?}", self.their_public_key);
+                        println!("sts->my_private_ephemeral: {:?}", self.my_private_ephemeral);
+                        println!(
+                            "sts->their_public_ephemeral: {:?}",
+                            self.their_public_ephemeral
+                        );
+                        println!("sts->rx_sym_key: {:?}", self.rx_sym_key);
+                        println!("sts->tx_sym_key: {:?}", self.tx_sym_key);
+
                         // A sends the message3: Ekey=Ka,IV=Sa||zero(sig)
                         let msg = self.msg3.clone();
                         if let Some(tx_msg) = msg {
                             let tx_msg = self.pack_plaintext_message(&tx_msg).unwrap(); // add crypto byte (and pass whitelist)
                             self.tx.construct_pprz_msg(&tx_msg); // append STX and checksum
                             self.stage = StsStage::CryptoOK; // update status
+                            println!("returning msg3, going ok");
+                            return Some(self.tx.buf.clone()); // return a message ready to be sent
+                        }
+
+                        // otherwise just send msg2 again
+                        let msg = self.msg1.clone();
+                        if let Some(tx_msg) = msg {
+                            let tx_msg = self.pack_plaintext_message(&tx_msg).unwrap(); // add crypto byte (and pass whitelist)
+                            self.tx.construct_pprz_msg(&tx_msg); // append STX and checksum
+                            println!("again returning msg1, waiting msg2");
                             return Some(self.tx.buf.clone()); // return a message ready to be sent
                         }
                         return None;
@@ -525,7 +549,7 @@ impl SecurePprzTransport {
     }
 
 
-    /// Parse incoming message bytes and returns a new decrypted message if it is available.
+    /// Parse incoming message bytes (PPRZ_STX..CHCKSUM B) and returns a new decrypted message if it is available.
     /// Otherwise `None` is returned.
     /// While the status != Crypto_OK no message is returned, and all logic is handled internally.
     /// Returned message has format of
@@ -606,18 +630,23 @@ impl SecurePprzTransport {
                     StsParty::Initiator => {
                         // process msg2
                         if self.rx.parse_byte(b) {
+                            println!("just got a new message");
                             let b = self.rx.buf.clone(); // clone the buffer
+                            println!("buf: {:?}", b);
                             self.rx.reset(); // reset the transport
                             match self.decrypt_message(&b) { // attempt decryption
                                 Ok(v) => {
                                     // we have a message
+                                    println!("message successfully decrypted");
                                     match self.sts_process_mgs2(&v) {
                                         Ok(_) => {
                                             // if OK, everything was handled in the underlying function
                                             // so do nothing
+                                            println!("processed msg2");
                                             return None;
                                         }
                                         Err(e) => {
+                                            println!("we have an error: {}", e);
                                             // log errors and return nothing
                                             self.last_error = StsError::MSG2_ERROR;
                                             self.last_error_message = e;
@@ -627,6 +656,8 @@ impl SecurePprzTransport {
                                 }
                                 Err(e) => {
                                     // log errors and return nothing
+                                    println!("message wasn't decrypted");
+                                    println!("last error: {}", e.clone());
                                     self.last_error = StsError::ONGOING_COMM_ERROR;
                                     self.last_error_message = e;
                                     return None;
