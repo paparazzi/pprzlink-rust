@@ -344,11 +344,8 @@ impl SecurePprzTransport {
 
                 // first check the message counter
                 let counter: &[u8] = &payload[PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN];
-                println!("couter bytes = {:?}",counter);
                 let counter_as_u32 =
                     pprzlink_bytes_to_counter(counter).expect("Error converting counter");
-                    
-                    println!("counter={}",counter_as_u32);
 
                 // check against the saved counter
                 if counter_as_u32 <= self.rx_sym_key.ctr {
@@ -475,7 +472,7 @@ impl SecurePprzTransport {
                         msg1 = self.pack_plaintext_message(&msg1).unwrap(); // add crypto byte (and pass whitelist)
                         self.tx.construct_pprz_msg(&msg1); // append STX and checksum
                         self.stage = StsStage::WaitMsg2; // update status
-                        println!("returning msg1, waiting msg2");
+                        //println!("returning msg1, waiting msg2");
                         return Some(self.tx.buf.clone()); // return a message ready to be sent
                     }
                     StsParty::Responder => {
@@ -505,15 +502,12 @@ impl SecurePprzTransport {
             StsStage::WaitMsg2 => {
                 match self.party {
                     StsParty::Initiator => {
-                        println!("sts->my_private_key: {:?}", self.my_private_key);
-                        println!("sts->their_public_key: {:?}", self.their_public_key);
-                        println!("sts->my_private_ephemeral: {:?}", self.my_private_ephemeral);
-                        println!(
-                            "sts->their_public_ephemeral: {:?}",
-                            self.their_public_ephemeral
-                        );
-                        println!("sts->rx_sym_key: {:?}", self.rx_sym_key);
-                        println!("sts->tx_sym_key: {:?}", self.tx_sym_key);
+                        //println!("sts->my_private_key: {:?}", self.my_private_key);
+                        //println!("sts->their_public_key: {:?}", self.their_public_key);
+                        //println!("sts->my_private_ephemeral: {:?}", self.my_private_ephemeral);
+                        //println!("sts->their_public_ephemeral: {:?}",self.their_public_ephemeral);
+                        //println!("sts->rx_sym_key: {:?}", self.rx_sym_key);
+                        //println!("sts->tx_sym_key: {:?}", self.tx_sym_key);
 
                         // A sends the message3: Ekey=Ka,IV=Sa||zero(sig)
                         let msg = self.msg3.clone();
@@ -630,9 +624,9 @@ impl SecurePprzTransport {
                     StsParty::Initiator => {
                         // process msg2
                         if self.rx.parse_byte(b) {
-                            println!("just got a new message");
+                            //println!("just got a new message");
                             let b = self.rx.buf.clone(); // clone the buffer
-                            println!("buf: {:?}", b);
+                            //println!("buf: {:?}", b);
                             self.rx.reset(); // reset the transport
                             match self.decrypt_message(&b) { // attempt decryption
                                 Ok(v) => {
