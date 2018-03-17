@@ -66,12 +66,10 @@ impl PprzTransport {
                     self.ck_b = b;
                     self.state = PprzParserState::GotLength;
                 //println!("Got length of {}",b);
-
                 } else {
                     self.hdr_err += 1;
                     self.state = PprzParserState::WaitSTX;
                 }
-
             }
             PprzParserState::GotLength => {
                 self.buf.push(b);

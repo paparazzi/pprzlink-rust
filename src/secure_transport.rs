@@ -22,25 +22,6 @@ const PPRZ_MSG_TYPE_ENCRYPTED: u8 = 0x55;
 const KEY_EXCHANGE_MSG_ID_UAV: u8 = 239;
 const KEY_EXCHANGE_MSG_ID_GCS: u8 = 159;
 
-// ENCRYPTED MSG:
-// 0 crypto/plaintext byte
-// 1 counter MSB 1 {big-endian}
-// 2 counter MSB 2 {big-endian}
-// 3 counter MSB 3 {big-endian}
-// 4 counter MSB 4 {big-endian}
-// 5 	source_ID {auth}
-// 6 	dest_ID {auth}
-// 7..N:    	... encrypted payload {encrypted}
-// end-15..end: tag (16 bytes) {tag}
-//
-// PLAINTEXT MSG:
-// 0 crypto/plaintext byte
-// 1 source_ID
-// 2 dest_ID
-// 3 class/component byte
-// 4 MSG_ID
-// .. msg payload {optional}
-
 /// index of encrypted/payload byte
 const PPRZ_GEC_IDX: usize = 0;
 /// index of the beginning of the counter
@@ -466,8 +447,16 @@ impl SecurePprzTransport {
     /// payload[4-end] MSG_PAYLOAD
     /// ```
     ///
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
+    /// ```
+    ///
     /// Output:
     /// if status == Crypto_OK => returns an encrypted message in the format of:
+    /// Pprzlink 2.0
     /// ```ignore
     /// 0 PPRZ_STX
     /// 1 msg len
@@ -486,17 +475,46 @@ impl SecurePprzTransport {
     /// end crc B
     /// ```
     ///
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// 0 PPRZ_STX
+    /// 1 msg len
+    /// 2 crypto byte
+    /// 3 counter MSB 1 {big-endian}
+    /// 4 counter MSB 2 {big-endian}
+    /// 5 counter MSB 3 {big-endian}
+    /// 6 counter MSB 4 {big-endian}
+    /// 7 	source_ID {auth}
+    /// 8: msg_ID {encrypted}
+    /// 9..end-19: optional msg payload {encrypted}
+    /// end-18..end-2: tag (16 bytes) {tag}
+    /// end-1 crc A
+    /// end crc B
+    /// ```
+
     /// if status != Crypto_OK => returns a plaintext message relevant to the internal stage
     /// of the STS protocol in the format of:
+    /// Pprzlink 2.0
     /// ```ignore
     /// 0 PPRZ_STX
     /// 1 msg len
     /// 2 crypto byte
     /// 3 source_ID
     /// 4 dest_ID
-    /// 10: class_component_IN
-    /// 11: msg_ID
-    /// 12..end-2: optional msg payload
+    /// 5: class_component_IN
+    /// 6: msg_ID
+    /// 7..end-2: optional msg payload
+    /// end-1 crc A
+    /// end crc B
+    /// ```
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// 0 PPRZ_STX
+    /// 1 msg len
+    /// 2 crypto byte
+    /// 3 source_ID
+    /// 4: msg_ID
+    /// 5..end-2: optional msg payload
     /// end-1 crc A
     /// end crc B
     /// ```
@@ -562,13 +580,6 @@ impl SecurePprzTransport {
             StsStage::WaitMsg2 => {
                 match self.party {
                     StsParty::Initiator => {
-                        //println!("sts->my_private_key: {:?}", self.my_private_key);
-                        //println!("sts->their_public_key: {:?}", self.their_public_key);
-                        //println!("sts->my_private_ephemeral: {:?}", self.my_private_ephemeral);
-                        //println!("sts->their_public_ephemeral: {:?}",self.their_public_ephemeral);
-                        //println!("sts->rx_sym_key: {:?}", self.rx_sym_key);
-                        //println!("sts->tx_sym_key: {:?}", self.tx_sym_key);
-
                         // A sends the message3: Ekey=Ka,IV=Sa||zero(sig)
                         let msg = self.msg3.clone();
                         if let Some(tx_msg) = msg {
@@ -613,6 +624,13 @@ impl SecurePprzTransport {
     /// payload[2] class/component
     /// payload[3] MSG_ID
     /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// or
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
     /// ```
     /// and can be directly processed by a parser
     pub fn parse_byte(&mut self, b: u8) -> Option<Vec<u8>> {
@@ -799,6 +817,13 @@ impl SecurePprzTransport {
     /// payload[3] MSG_ID
     /// payload[4-end] MSG_PAYLOAD
     /// ```
+    /// or
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
+    /// ```
     fn sts_initiate_msg(&mut self) -> Vec<u8> {
         assert!(self.my_private_ephemeral.is_ready());
         assert!(self.my_private_key.is_ready());
@@ -846,6 +871,13 @@ impl SecurePprzTransport {
     /// payload[2] class/component
     /// payload[3] MSG_ID
     /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// or
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs1(&mut self, payload: &[u8]) -> Result<(), String> {
         assert!(self.my_private_ephemeral.is_ready());
@@ -1048,6 +1080,13 @@ impl SecurePprzTransport {
     /// payload[2] class/component
     /// payload[3] MSG_ID
     /// payload[4-end] MSG_PAYLOAD
+    /// ```
+    /// or
+    /// Pprzlink 1.0
+    /// ```ignore
+    /// payload[0] source SENDER_ID
+    /// payload[1] MSG_ID
+    /// payload[2-end] MSG_PAYLOAD
     /// ```
     fn sts_process_mgs2(&mut self, payload: &[u8]) -> Result<(), String> {
         assert!(self.my_private_key.is_ready());
