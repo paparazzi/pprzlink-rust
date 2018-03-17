@@ -11,7 +11,7 @@ keywords = ["UAV", "pprzlink","paparazzi"]
 categories = ["embedded", "parsing","parser-implementations"]
 
 [dependencies]
-xml-rs = "0.6"
+xml-rs = "0.7.0"
 ivyrust = {git = "https://github.com/paparazzi/ivy-rust" }
 byteorder = "1.1.0"
 rusthacl = { git = "https://github.com/podhrmic/rusthacl.git" }

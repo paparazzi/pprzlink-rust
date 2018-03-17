@@ -2,7 +2,8 @@
 // Ppprzlink Secure Transport
 // =========================
 use super::rusthacl::*;
-use super::parser::{PprzDictionary, PprzMsgBaseType, PprzMsgClassID, PprzMessage};
+use super::parser::{PprzDictionary, PprzMsgBaseType, PprzMsgClassID, PprzMessage,
+                    PprzProtocolVersion};
 use super::transport::PprzTransport;
 use std::sync::Arc;
 use std::mem;
@@ -11,13 +12,13 @@ use super::rand::Rng;
 use super::rand::os::OsRng;
 use byteorder::{NetworkEndian, WriteBytesExt, ReadBytesExt};
 
-use parser::V2_MSG_ID;
+use parser::{V1_MSG_ID, V2_MSG_ID};
 
+/// Two possible values of the crypto byte
 const PPRZ_MSG_TYPE_PLAINTEXT: u8 = 0xaa;
 const PPRZ_MSG_TYPE_ENCRYPTED: u8 = 0x55;
 
-/// TODO: a hack to to allow passing the key exchage messages before
-/// secure comlink is established
+/// MSG_ID for key exchange messages. Update if IDs change in messages.xml
 const KEY_EXCHANGE_MSG_ID_UAV: u8 = 239;
 const KEY_EXCHANGE_MSG_ID_GCS: u8 = 159;
 
@@ -46,32 +47,44 @@ const PPRZ_GEC_IDX: usize = 0;
 const PPRZ_CNTR_IDX: usize = 1;
 /// index of the beginning of the authenticated bytes
 const PPRZ_AUTH_IDX: usize = 5;
-/// index of the beginning of the ciphertex
-const PPRZ_CIPH_IDX: usize = 7;
 /// legth of the message signature
 const PPRZ_SIGN_LEN: usize = 64;
 /// lenght of a hash for key derivation
 const PPRZ_HASH_LEN: usize = 64;
 /// length of the encryption keys
 const PPRZ_KEY_LEN: usize = 32;
-/// length of the authenticated data
-const PPRZ_AUTH_LEN: usize = 2;
 /// length of the message authentication tag
 const PPRZ_MAC_LEN: usize = 16;
 /// length of the message nonce
 const PPRZ_NONCE_LEN: usize = 12;
 /// length of the counter
 const PPRZ_COUNTER_LEN: usize = 4;
-/// index of the message ID for plaintext messages
-const PPRZ_PLAINTEXT_MSG_ID_IDX: usize = 4;
-/// 4 bytes of MSG info (source_ID, dest_ID, class_byte, msg_ID) + 1 GEC byte
-const PPRZ_PLAINTEXT_MSG_MIN_LEN: usize = 5;
-/// 20 bytes crypto overhead + 4 bytes MSG info + 1 GEC byte
-const PPRZ_ENCRYPTED_MSG_MIN_LEN: usize = 25;
 /// length of the crypto overhead (4 bytes of counter + 16 bytes of tag)
 const PPRZ_CRYPTO_OVERHEAD: usize = 20;
 /// basepoint value for the scalar curve multiplication
 const PPRZ_CURVE_BASEPOINT: u8 = 9;
+
+/// Pprzlink 2.0: index of the beginning of the ciphertex
+const V2_PPRZ_CIPH_IDX: usize = 7;
+/// Pprzlink 2.0: index of the message ID for plaintext messages
+const V2_PPRZ_PLAINTEXT_MSG_ID_IDX: usize = 4;
+/// Pprzlink 2.0: 4 bytes of MSG info (source_ID, dest_ID, class_byte, msg_ID) + 1 GEC byte
+const V2_PPRZ_PLAINTEXT_MSG_MIN_LEN: usize = 5;
+/// Pprzlink 2.0: 20 bytes crypto overhead + 4 bytes MSG info + 1 GEC byte
+const V2_PPRZ_ENCRYPTED_MSG_MIN_LEN: usize = 25;
+/// Pprzlink 2.0: length of the authenticated data (SENDER ID, DEST ID)
+const V2_PPRZ_AUTH_LEN: usize = 2;
+
+/// Pprzlink 1.0: index of the beginning of the ciphertex
+const V1_PPRZ_CIPH_IDX: usize = 6;
+/// Pprzlink 1.0: index of the message ID for plaintext messages
+const V1_PPRZ_PLAINTEXT_MSG_ID_IDX: usize = 2;
+/// Pprzlink 1.0: 2 bytes of MSG info (source_ID, msg_ID) + 1 GEC byte
+const V1_PPRZ_PLAINTEXT_MSG_MIN_LEN: usize = 3;
+/// Pprzlink 1.0: 20 bytes crypto overhead + 2 bytes MSG info + 1 GEC byte
+const V1_PPRZ_ENCRYPTED_MSG_MIN_LEN: usize = 23;
+/// Pprzlink 1.0: length of the authenticated data (SENDER ID)
+const V1_PPRZ_AUTH_LEN: usize = 1;
 
 /// Container for a symmetric key
 #[derive(Debug)]
@@ -141,14 +154,15 @@ pub fn pprzlink_bytes_to_counter(bytes: &[u8]) -> Result<u32, String> {
 /// From NativeEndian -> NetworkEndian
 pub fn pprzlink_counter_to_bytes(c: u32) -> Vec<u8> {
     let mut buf = vec![];
-    buf.write_u32::<NetworkEndian>(c).expect(
-        "Error - converting to bytes not succesful",
-    );
+    buf.write_u32::<NetworkEndian>(c)
+        .expect("Error - converting to bytes not succesful");
     buf
 }
 
 /// can be used for for tx and rx
 pub struct SecurePprzTransport {
+    /// protocol version
+    protocol: PprzProtocolVersion,
     /// pprz transport for parsing incoming messages
     rx: PprzTransport,
     /// pprz transport for constructing outgoing messages
@@ -197,6 +211,7 @@ impl SecurePprzTransport {
     /// destination_id - the AC_ID of the destination
     pub fn new(party: StsParty, destination_id: u8) -> SecurePprzTransport {
         SecurePprzTransport {
+            protocol: PprzProtocolVersion::ProtocolV2,
             rx: PprzTransport::new(),
             tx: PprzTransport::new(),
             allowed_msg_ids: vec![KEY_EXCHANGE_MSG_ID_UAV, KEY_EXCHANGE_MSG_ID_GCS],
@@ -218,6 +233,11 @@ impl SecurePprzTransport {
             msg2: None,
             msg3: None,
         }
+    }
+
+    /// set the pprzlink version (1.0 or 2.0)
+    pub fn set_pprzlink_version(&mut self, version: PprzProtocolVersion) {
+        self.protocol = version;
     }
 
     /// set the message class for incoming messages
@@ -244,11 +264,20 @@ impl SecurePprzTransport {
     /// Assumes payload in form of source_ID .. msg_payload
     /// Returns plaintext pprzlink 2.0 message
     pub fn pack_plaintext_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
-        if payload.len() <= V2_MSG_ID {
+        let msg_id;
+        match self.protocol {
+            PprzProtocolVersion::ProtocolV1 => {
+                msg_id = V1_MSG_ID;
+            }
+            PprzProtocolVersion::ProtocolV2 => {
+                msg_id = V2_MSG_ID;
+            }
+        }
+        if payload.len() <= msg_id {
             return Err(String::from("Plaintext msg payload too short"));
         }
         // check if the message ID is whitelisted
-        if self.allowed_msg_ids.contains(&payload[V2_MSG_ID]) {
+        if self.allowed_msg_ids.contains(&payload[msg_id]) {
             let mut v = vec![PPRZ_MSG_TYPE_PLAINTEXT];
             v.extend_from_slice(&payload);
             return Ok(v);
@@ -256,14 +285,26 @@ impl SecurePprzTransport {
         return Err(String::from("Plaintext msg not in the whitelist"));
     }
 
-
     /// Attemp message encryption
     /// Adds crypto_byte, counter and tag
     /// Assumes that the first two bytes of 'payload' are source_ID and dest_ID
     /// and these two bytes will be authenticated
     /// Returns encrypted pprzlink 2.0 message (crypto_byte .. tag)
     pub fn encrypt_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
-        if payload.len() <= V2_MSG_ID {
+        let msg_id;
+        let pprz_auth_len;
+        match self.protocol {
+            PprzProtocolVersion::ProtocolV1 => {
+                msg_id = V1_MSG_ID;
+                pprz_auth_len = V1_PPRZ_AUTH_LEN;
+            }
+            PprzProtocolVersion::ProtocolV2 => {
+                msg_id = V2_MSG_ID;
+                pprz_auth_len = V2_PPRZ_AUTH_LEN;
+            }
+        }
+
+        if payload.len() <= msg_id {
             return Err(String::from("Msg payload too short"));
         }
 
@@ -280,8 +321,8 @@ impl SecurePprzTransport {
         self.tx_sym_key.nonce[0..4].clone_from_slice(&counter_as_bytes);
 
         // update intermediate fields
-        let auth: &[u8] = &payload[0..PPRZ_AUTH_LEN];
-        let plaintext: &[u8] = &payload[PPRZ_AUTH_LEN..];
+        let auth: &[u8] = &payload[0..pprz_auth_len];
+        let plaintext: &[u8] = &payload[pprz_auth_len..];
         let mut ciphertext = vec![0; plaintext.len()];
         let mut tag: [u8; PPRZ_MAC_LEN] = [0; PPRZ_MAC_LEN];
         let mut msg = Vec::with_capacity(payload.len() + PPRZ_CRYPTO_OVERHEAD + 1);
@@ -310,22 +351,43 @@ impl SecurePprzTransport {
         Ok(msg)
     }
 
-
     /// Attemp message decryption
     /// If a message is unencrypted, pass it through only if the MSG_ID is in the whitelist
     /// Returns Pprzlink 2.0 message bytes (source_ID .. msg payload)
     pub fn decrypt_message(&mut self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        let pprz_plaintext_msg_min_len;
+        let pprz_plaintext_msg_id_idx;
+        let pprz_encrypted_msg_min_len;
+        let pprz_auth_len;
+        let pprz_ciph_idx;
+
+        match self.protocol {
+            PprzProtocolVersion::ProtocolV1 => {
+                pprz_plaintext_msg_min_len = V1_PPRZ_PLAINTEXT_MSG_MIN_LEN;
+                pprz_plaintext_msg_id_idx = V1_PPRZ_PLAINTEXT_MSG_ID_IDX;
+                pprz_encrypted_msg_min_len = V1_PPRZ_ENCRYPTED_MSG_MIN_LEN;
+                pprz_auth_len = V1_PPRZ_AUTH_LEN;
+                pprz_ciph_idx = V1_PPRZ_CIPH_IDX;
+            }
+            PprzProtocolVersion::ProtocolV2 => {
+                pprz_plaintext_msg_min_len = V2_PPRZ_PLAINTEXT_MSG_MIN_LEN;
+                pprz_plaintext_msg_id_idx = V2_PPRZ_PLAINTEXT_MSG_ID_IDX;
+                pprz_encrypted_msg_min_len = V2_PPRZ_ENCRYPTED_MSG_MIN_LEN;
+                pprz_auth_len = V2_PPRZ_AUTH_LEN;
+                pprz_ciph_idx = V2_PPRZ_CIPH_IDX;
+            }
+        }
+
         let mut data = vec![];
         match payload[PPRZ_GEC_IDX] {
             PPRZ_MSG_TYPE_PLAINTEXT => {
                 // check if we have enough data in the buffer
-                if payload.len() < PPRZ_PLAINTEXT_MSG_MIN_LEN {
+                if payload.len() < pprz_plaintext_msg_min_len {
                     return Err(String::from("Plaintext msg payload too short"));
                 }
                 // check if the message ID is whitelisted
-                if self.allowed_msg_ids.contains(
-                    &payload[PPRZ_PLAINTEXT_MSG_ID_IDX],
-                )
+                if self.allowed_msg_ids
+                    .contains(&payload[pprz_plaintext_msg_id_idx])
                 {
                     data.extend_from_slice(&payload[1..]);
                     return Ok(data);
@@ -334,7 +396,7 @@ impl SecurePprzTransport {
             }
             PPRZ_MSG_TYPE_ENCRYPTED => {
                 // check if we have enough data in the buffer
-                if payload.len() < PPRZ_ENCRYPTED_MSG_MIN_LEN {
+                if payload.len() < pprz_encrypted_msg_min_len {
                     return Err(String::from("Encrypted msg payload too short"));
                 }
 
@@ -355,15 +417,13 @@ impl SecurePprzTransport {
                 }
 
                 // update nonce
-                self.rx_sym_key.nonce[0..4].clone_from_slice(
-                    &payload
-                        [PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN],
-                );
+                self.rx_sym_key.nonce[0..4]
+                    .clone_from_slice(&payload[PPRZ_CNTR_IDX..PPRZ_CNTR_IDX + PPRZ_COUNTER_LEN]);
 
                 // update intermediate fields
-                let auth: &[u8] = &payload[PPRZ_AUTH_IDX..PPRZ_AUTH_IDX + PPRZ_AUTH_LEN];
+                let auth: &[u8] = &payload[PPRZ_AUTH_IDX..PPRZ_AUTH_IDX + pprz_auth_len];
                 let tag: &[u8] = &payload[payload.len() - PPRZ_MAC_LEN..];
-                let ciphertext: &[u8] = &payload[PPRZ_CIPH_IDX..payload.len() - PPRZ_MAC_LEN];
+                let ciphertext: &[u8] = &payload[pprz_ciph_idx..payload.len() - PPRZ_MAC_LEN];
                 let mut plaintext = Vec::with_capacity(auth.len() + ciphertext.len());
                 plaintext.extend_from_slice(auth);
                 plaintext.extend_from_slice(ciphertext);
@@ -472,7 +532,7 @@ impl SecurePprzTransport {
                         msg1 = self.pack_plaintext_message(&msg1).unwrap(); // add crypto byte (and pass whitelist)
                         self.tx.construct_pprz_msg(&msg1); // append STX and checksum
                         self.stage = StsStage::WaitMsg2; // update status
-                        //println!("returning msg1, waiting msg2");
+                        println!("returning msg1, waiting msg2");
                         return Some(self.tx.buf.clone()); // return a message ready to be sent
                     }
                     StsParty::Responder => {
@@ -542,7 +602,6 @@ impl SecurePprzTransport {
         //None
     }
 
-
     /// Parse incoming message bytes (PPRZ_STX..CHCKSUM B) and returns a new decrypted message if it is available.
     /// Otherwise `None` is returned.
     /// While the status != Crypto_OK no message is returned, and all logic is handled internally.
@@ -564,7 +623,8 @@ impl SecurePprzTransport {
                     // we just got a message
                     let b = self.rx.buf.clone(); // clone the buffer
                     self.rx.reset(); // reset the transport
-                    match self.decrypt_message(&b) { // attempt decryption
+                    match self.decrypt_message(&b) {
+                        // attempt decryption
                         Ok(v) => return Some(v), // return payload
                         Err(e) => {
                             // log errors and return nothing
@@ -589,7 +649,8 @@ impl SecurePprzTransport {
                             // we just got a message
                             let b = self.rx.buf.clone(); // clone the buffer
                             self.rx.reset(); // reset the transport
-                            match self.decrypt_message(&b) { // attempt decryption
+                            match self.decrypt_message(&b) {
+                                // attempt decryption
                                 Ok(v) => {
                                     // we have a message
                                     match self.sts_process_mgs1(&v) {
@@ -626,9 +687,10 @@ impl SecurePprzTransport {
                         if self.rx.parse_byte(b) {
                             //println!("just got a new message");
                             let b = self.rx.buf.clone(); // clone the buffer
-                            //println!("buf: {:?}", b);
+                                                         //println!("buf: {:?}", b);
                             self.rx.reset(); // reset the transport
-                            match self.decrypt_message(&b) { // attempt decryption
+                            match self.decrypt_message(&b) {
+                                // attempt decryption
                                 Ok(v) => {
                                     // we have a message
                                     println!("message successfully decrypted");
@@ -650,8 +712,8 @@ impl SecurePprzTransport {
                                 }
                                 Err(e) => {
                                     // log errors and return nothing
-                                    println!("message wasn't decrypted");
-                                    println!("last error: {}", e.clone());
+                                    //println!("message wasn't decrypted");
+                                    //println!("last error: {}", e.clone());
                                     self.last_error = StsError::ONGOING_COMM_ERROR;
                                     self.last_error_message = e;
                                     return None;
@@ -672,7 +734,8 @@ impl SecurePprzTransport {
                         if self.rx.parse_byte(b) {
                             let b = self.rx.buf.clone(); // clone the buffer
                             self.rx.reset(); // reset the transport
-                            match self.decrypt_message(&b) { // attempt decryption
+                            match self.decrypt_message(&b) {
+                                // attempt decryption
                                 Ok(v) => {
                                     // we have a message
                                     match self.sts_process_mgs3(&v) {
@@ -797,14 +860,12 @@ impl SecurePprzTransport {
                     PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
                 ).expect("thread main: message name not found");
                 if name != "KEY_EXCHANGE_GCS" {
-                    let s = String::from(
-                        "Error, received message is not KEY_EXCHANGE_GCS, but ",
-                    ) + &name;
+                    let s = String::from("Error, received message is not KEY_EXCHANGE_GCS, but ")
+                        + &name;
                     return Err(s);
                 }
-                msg = dict.find_msg_by_name(&name).expect(
-                    "thread main: no message found",
-                );
+                msg = dict.find_msg_by_name(&name)
+                    .expect("thread main: no message found");
                 // update message fields with real values
                 msg.update(payload);
             }
@@ -880,9 +941,9 @@ impl SecurePprzTransport {
         // update RX key
         self.rx_sym_key
             .set(
-                &ka_sa[0..PPRZ_KEY_LEN], // key
+                &ka_sa[0..PPRZ_KEY_LEN],                             // key
                 &ka_sa[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
-                0, // set counter to zero
+                0,                                                   // set counter to zero
             )
             .unwrap(); // shouldn't fail
 
@@ -898,9 +959,9 @@ impl SecurePprzTransport {
         // update TX key
         self.tx_sym_key
             .set(
-                &kb_sb[0..PPRZ_KEY_LEN], // key
+                &kb_sb[0..PPRZ_KEY_LEN],                             // key
                 &kb_sb[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
-                0, // set counter to zero
+                0,                                                   // set counter to zero
             )
             .unwrap(); // shouldn't fail
 
@@ -1001,14 +1062,12 @@ impl SecurePprzTransport {
                     PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
                 ).expect("thread main: message name not found");
                 if name != "KEY_EXCHANGE_UAV" {
-                    let s = String::from(
-                        "Error, received message is not KEY_EXCHANGE_UAV, but ",
-                    ) + &name;
+                    let s = String::from("Error, received message is not KEY_EXCHANGE_UAV, but ")
+                        + &name;
                     return Err(s);
                 }
-                msg = dict.find_msg_by_name(&name).expect(
-                    "thread main: no message found",
-                );
+                msg = dict.find_msg_by_name(&name)
+                    .expect("thread main: no message found");
                 // update message fields with real values
                 msg.update(payload);
             }
@@ -1089,9 +1148,9 @@ impl SecurePprzTransport {
         // update TX key
         self.tx_sym_key
             .set(
-                &ka_sa[0..PPRZ_KEY_LEN], // key
+                &ka_sa[0..PPRZ_KEY_LEN],                             // key
                 &ka_sa[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
-                0, // set counter to zero
+                0,                                                   // set counter to zero
             )
             .unwrap(); // shouldn't fail
 
@@ -1107,9 +1166,9 @@ impl SecurePprzTransport {
         // update RX key
         self.rx_sym_key
             .set(
-                &kb_sb[0..PPRZ_KEY_LEN], // key
+                &kb_sb[0..PPRZ_KEY_LEN],                             // key
                 &kb_sb[PPRZ_KEY_LEN..PPRZ_KEY_LEN + PPRZ_NONCE_LEN], // nonce
-                0, // set counter to zero
+                0,                                                   // set counter to zero
             )
             .unwrap(); // shouldn't fail
 
@@ -1229,14 +1288,12 @@ impl SecurePprzTransport {
                     PprzMessage::get_msg_id_from_buf(payload, dict.protocol),
                 ).expect("thread main: message name not found");
                 if name != "KEY_EXCHANGE_GCS" {
-                    let s = String::from(
-                        "Error, received message is not KEY_EXCHANGE_GCS, but ",
-                    ) + &name;
+                    let s = String::from("Error, received message is not KEY_EXCHANGE_GCS, but ")
+                        + &name;
                     return Err(s);
                 }
-                msg = dict.find_msg_by_name(&name).expect(
-                    "thread main: no message found",
-                );
+                msg = dict.find_msg_by_name(&name)
+                    .expect("thread main: no message found");
                 // update message fields with real values
                 msg.update(payload);
             }
@@ -1322,7 +1379,6 @@ impl SecurePprzTransport {
     }
 }
 
-
 /// Private key container
 /// Contains both public key P_a and
 /// private key Q_a
@@ -1348,7 +1404,6 @@ impl GecPrivKey {
         return self.ready;
     }
 
-
     #[allow(dead_code)]
     pub fn set(&mut self, q: &[u8], p: &[u8]) -> Result<(), String> {
         if q.len() != PPRZ_KEY_LEN {
@@ -1369,7 +1424,6 @@ impl GecPrivKey {
         Ok(())
     }
 }
-
 
 /// Public key container
 /// Contains public key P_b
@@ -1417,8 +1471,7 @@ pub enum StsParty {
 
 /// Stage of station-to-station key exchange
 #[allow(dead_code)]
-#[derive(Debug)]
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum StsStage {
     Init,
     WaitMsg1,
@@ -1429,8 +1482,7 @@ pub enum StsStage {
 
 /// key exchange message type
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum StsMsgType {
     P_AE = 0,
     P_BE = 1,
@@ -1463,8 +1515,6 @@ pub enum StsError {
     ONGOING_COMM_ERROR,
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1483,7 +1533,6 @@ mod tests {
         println!("Payload to be decrypted: {:?}", buf);
         assert_eq!(trans.decrypt_message(&buf).unwrap(), [1, 2, 4, 3]);
     }
-
 
     #[test]
     fn test_encryption() {
@@ -1533,14 +1582,18 @@ mod tests {
         assert_eq!(trans.decrypt_message(&buf).unwrap(), [1, 2, 4, 3]);
     }
 
-    static KEY: [u8; 32] = [0x70, 0x03, 0xAA, 0x0A, 0x8E, 0xE9, 0xA8, 0xFF, 0xD5, 0x46, 0x1E,
-                            0xEC, 0x7C, 0xC1, 0xC1, 0xA1, 0x6A, 0x43, 0xC9, 0xD4, 0xB3, 0x2B,
-                            0x94, 0x7E, 0x76, 0xF9, 0xD8, 0xE8, 0x1A, 0x31, 0x5D, 0xA8];
+    static KEY: [u8; 32] = [
+        0x70, 0x03, 0xAA, 0x0A, 0x8E, 0xE9, 0xA8, 0xFF, 0xD5, 0x46, 0x1E, 0xEC, 0x7C, 0xC1, 0xC1,
+        0xA1, 0x6A, 0x43, 0xC9, 0xD4, 0xB3, 0x2B, 0x94, 0x7E, 0x76, 0xF9, 0xD8, 0xE8, 0x1A, 0x31,
+        0x5D, 0xA8,
+    ];
 
     static CIPHERTEXT: [u8; 2] = [0xa1, 0x7b];
     static PLAINTEXT: [u8; 2] = [4, 3];
     static AUTH: [u8; 2] = [1, 2];
-    static MAC: [u8; 16] = [0x83, 0xf6, 0x95, 0x66, 0x4a, 0xa4, 0x82, 0x82, 0x12, 0xf0, 0x7f,
-                            0xa1, 0xf, 0x92, 0x86, 0xea];
+    static MAC: [u8; 16] = [
+        0x83, 0xf6, 0x95, 0x66, 0x4a, 0xa4, 0x82, 0x82, 0x12, 0xf0, 0x7f, 0xa1, 0xf, 0x92, 0x86,
+        0xea,
+    ];
     static NONCE: [u8; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc];
 }

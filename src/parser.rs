@@ -9,14 +9,13 @@ use super::xml::attribute::OwnedAttribute;
 
 /// define constants
 const V1_V2_SENDER_ID: usize = 0;
-const V1_MSG_ID: usize = 1;
+pub const V1_MSG_ID: usize = 1;
 const V1_MSG_PAYLOAD: usize = 2;
 
 const V2_DESTINATION_ID: usize = 1;
 const V2_CLASS_COMPONENT_ID: usize = 2;
 pub const V2_MSG_ID: usize = 3;
 const V2_MSG_PAYLOAD: usize = 4;
-
 
 /// two versions of pprzlink protocol
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
@@ -34,8 +33,6 @@ impl fmt::Display for PprzProtocolVersion {
         write!(f, "{}", s)
     }
 }
-
-
 
 /// only one version of the messages for now
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd)]
@@ -121,56 +118,37 @@ impl fmt::Display for PprzMsgBaseType {
             PprzMsgBaseType::Int32(v) => s = format!("{}", v),
             PprzMsgBaseType::Char(v) => s = format!("{}", v),
             PprzMsgBaseType::String(ref v) => s = format!("{}", v),
-            PprzMsgBaseType::FloatArr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::DoubleArr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Uint8Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Uint16Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Uint32Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Int8Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Int16Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::Int32Arr(ref v) => {
-                for val in v {
-                    s = s + &format!("{},", val);
-                }
-            }
-            PprzMsgBaseType::CharArr(ref v) => {
-                for val in v {
-                    s = s + &format!("{}", val);
-                }
-            }
+            PprzMsgBaseType::FloatArr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::DoubleArr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Uint8Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Uint16Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Uint32Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Int8Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Int16Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::Int32Arr(ref v) => for val in v {
+                s = s + &format!("{},", val);
+            },
+            PprzMsgBaseType::CharArr(ref v) => for val in v {
+                s = s + &format!("{}", val);
+            },
         }
         write!(f, "{}", s)
     }
 }
-
 
 /// each field has a name and a type
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -221,8 +199,6 @@ use std::mem;
 
 use std::io::Write;
 
-
-
 impl PprzMessage {
     /// Find whether one of the message fields contains `query`
     pub fn contains(&self, query: &str) -> bool {
@@ -271,7 +247,7 @@ impl PprzMessage {
     pub fn new() -> PprzMessage {
         PprzMessage {
             protocol: PprzProtocolVersion::ProtocolV2,
-            source: 0, // SENDER_ID
+            source: 0,      // SENDER_ID
             destination: 0, // can be BROADCAST
             component: 0,
             version: PprzMessageVersion::MessagesV1,
@@ -534,7 +510,6 @@ impl PprzMessage {
                         payload.len()
                     );
                 }
-
             }
             PprzProtocolVersion::ProtocolV2 => {
                 idx = V2_MSG_PAYLOAD;
@@ -579,9 +554,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Uint16(0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -596,9 +569,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Uint32(0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -617,9 +588,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Int16(0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -634,9 +603,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Int32(0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -653,9 +620,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Float(0.0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -670,9 +635,7 @@ impl PprzMessage {
                             field.value = PprzMsgBaseType::Double(0.0);
                             println!(
                                 "Error updating message field {} {}: {}",
-                                field.name,
-                                field.value,
-                                e
+                                field.name, field.value, e
                             );
                         }
                     };
@@ -719,9 +682,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -744,9 +705,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -780,9 +739,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -805,9 +762,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -830,9 +785,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -855,9 +808,7 @@ impl PprzMessage {
                             Err(e) => {
                                 println!(
                                     "Error updating message field {} {}: {}",
-                                    field.name,
-                                    field.value,
-                                    e
+                                    field.name, field.value, e
                                 );
                             }
                         };
@@ -1016,8 +967,8 @@ impl PprzMessage {
             PprzProtocolVersion::ProtocolV2 => {
                 buf.push(self.source); // sender ID
                 buf.push(self.destination); // destination ID
-                // bits 0-3: 16 class ID available
-                // bits 4-7: 16 component ID available
+                                            // bits 0-3: 16 class ID available
+                                            // bits 4-7: 16 component ID available
                 buf.push(self.class as u8 & 0xF | self.component & 0xF0); // class/component ID
                 buf.push(self.id); // message ID
             }
@@ -1094,7 +1045,6 @@ impl PprzMessage {
         buf
     }
 
-
     /// Set the soure (`SENDER_ID`) of the message
     /// Important when sending messages from the ground to the UAV
     pub fn set_sender(&mut self, sender_id: u8) {
@@ -1166,17 +1116,12 @@ impl fmt::Display for PprzMsgClass {
     }
 }
 
-
-
-
-
 /// Dictionary of all available messages
 #[derive(Debug)]
 pub struct PprzDictionary {
     pub classes: Vec<PprzMsgClass>,
     pub protocol: PprzProtocolVersion,
 }
-
 
 impl PprzDictionary {
     pub fn new(pprzlink_version: PprzProtocolVersion) -> PprzDictionary {
@@ -1228,7 +1173,6 @@ impl PprzDictionary {
         None
     }
 
-
     pub fn get_msg_fields(
         &self,
         msg_class_id: PprzMsgClassID,
@@ -1245,7 +1189,6 @@ impl PprzDictionary {
         }
         None
     }
-
 
     pub fn get_msg_id(&self, msg_class_id: PprzMsgClassID, msg_name: &str) -> Option<u8> {
         for class in &self.classes {
@@ -1271,11 +1214,6 @@ impl fmt::Display for PprzDictionary {
     }
 }
 
-
-
-
-
-
 ///
 /// Xml parser functions
 ///
@@ -1297,7 +1235,9 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
     let mut current_class = PprzMsgClassID::Unknown;
     for e in parser {
         match e {
-            Ok(XmlEvent::StartElement { name, attributes, .. }) => {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
                 match name.local_name.as_ref() {
                     "msg_class" => {
                         // new message class - match the ID and optionally append
@@ -1342,9 +1282,10 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
                             panic!("No attribute 'id' present. Attributes: {:?}", attributes);
                         }
                         let msg_name = &attributes[name_idx].value;
-                        let msg_id: u8 = attributes[id_idx].value.parse().expect(
-                            "Invalid message id",
-                        );
+                        let msg_id: u8 = attributes[id_idx]
+                            .value
+                            .parse()
+                            .expect("Invalid message id");
 
                         let mut last_class =
                             dictionary.classes.pop().expect("No message class found!");
@@ -1367,7 +1308,6 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
 
                         // push the messahe class back either way
                         dictionary.classes.push(last_class);
-
                     }
                     "field" => {
                         // new message field - check within the message for existing fields and
@@ -1382,31 +1322,31 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
                         }
                         let field_name = &attributes[name_idx].value;
 
-                        let field_type: PprzMsgBaseType =
-                            match attributes[type_idx].value.as_ref() {
-                                "float" => PprzMsgBaseType::Float(0.0),
-                                "float[]" | "float[3]" | "float[4]" => PprzMsgBaseType::FloatArr(
-                                    vec![],
-                                ),
-                                "double" => PprzMsgBaseType::Double(0.0),
-                                "double[]" => PprzMsgBaseType::DoubleArr(vec![]),
-                                "uint8" => PprzMsgBaseType::Uint8(0),
-                                "uint8[]" => PprzMsgBaseType::Uint8Arr(vec![]),
-                                "uint16" => PprzMsgBaseType::Uint16(0),
-                                "uint16[]" => PprzMsgBaseType::Uint16Arr(vec![]),
-                                "uint32" => PprzMsgBaseType::Uint32(0),
-                                "uint32[]" => PprzMsgBaseType::Uint32Arr(vec![]),
-                                "int8" => PprzMsgBaseType::Int8(0),
-                                "int8[]" => PprzMsgBaseType::Int8Arr(vec![]),
-                                "int16" => PprzMsgBaseType::Int16(0),
-                                "int16[]" => PprzMsgBaseType::Int16Arr(vec![]),
-                                "int32" => PprzMsgBaseType::Int32(0),
-                                "int32[]" => PprzMsgBaseType::Int32Arr(vec![]),
-                                "char" => PprzMsgBaseType::Char(' '),
-                                "char[]" => PprzMsgBaseType::CharArr(vec![]),
-                                "string" => PprzMsgBaseType::String(String::new()),
-                                _ => panic!("Unknown field type"),
-                            };
+                        let field_type: PprzMsgBaseType = match attributes[type_idx].value.as_ref()
+                        {
+                            "float" => PprzMsgBaseType::Float(0.0),
+                            "float[]" | "float[3]" | "float[4]" => {
+                                PprzMsgBaseType::FloatArr(vec![])
+                            }
+                            "double" => PprzMsgBaseType::Double(0.0),
+                            "double[]" => PprzMsgBaseType::DoubleArr(vec![]),
+                            "uint8" => PprzMsgBaseType::Uint8(0),
+                            "uint8[]" => PprzMsgBaseType::Uint8Arr(vec![]),
+                            "uint16" => PprzMsgBaseType::Uint16(0),
+                            "uint16[]" => PprzMsgBaseType::Uint16Arr(vec![]),
+                            "uint32" => PprzMsgBaseType::Uint32(0),
+                            "uint32[]" => PprzMsgBaseType::Uint32Arr(vec![]),
+                            "int8" => PprzMsgBaseType::Int8(0),
+                            "int8[]" => PprzMsgBaseType::Int8Arr(vec![]),
+                            "int16" => PprzMsgBaseType::Int16(0),
+                            "int16[]" => PprzMsgBaseType::Int16Arr(vec![]),
+                            "int32" => PprzMsgBaseType::Int32(0),
+                            "int32[]" => PprzMsgBaseType::Int32Arr(vec![]),
+                            "char" => PprzMsgBaseType::Char(' '),
+                            "char[]" => PprzMsgBaseType::CharArr(vec![]),
+                            "string" => PprzMsgBaseType::String(String::new()),
+                            _ => panic!("Unknown field type"),
+                        };
 
                         // create a new field
                         let field = PprzField {
@@ -1430,11 +1370,9 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
 
                         // pusg last class back to the dictionary
                         dictionary.classes.push(last_class);
-
                     }
                     _ => {}
                 }
-
             }
             Ok(XmlEvent::EndElement { .. }) => {
                 // do nothing
