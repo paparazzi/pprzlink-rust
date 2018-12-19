@@ -2,15 +2,38 @@
 extern crate serde_derive;
 extern crate serde;
 
-/// Pprzlink message set
-#[allow(non_camel_case_types)]
-#[allow(non_snake_case)]
-pub mod pprzlink {
-    include!("../common.rs");
-}
+// serde custom data format
+pub mod de;
+pub mod error;
+pub mod ser;
 
-use crate::pprzlink::alert;
+use crate::de::{from_str, Deserializer};
+use crate::error::{Error, Result};
+use crate::ser::{to_string, Serializer};
+
+/// Pprzlink message set
+include!("../telemetry.rs");
 
 fn main() {
-    println!("Hello rust");
+    let m = telemetry::PprzMessageTelemetry::NPS_RATE_ATTITUDE(telemetry::NPS_RATE_ATTITUDE_DATA::default());
+    let s = to_string(&m).unwrap();
+    println!("{}", s);
+
+    let m = telemetry::PprzMessageTelemetry::RTOS_MON(telemetry::RTOS_MON_DATA::default());
+    let s = to_string(&m).unwrap();
+    println!("{}", s);
+
+    let m = telemetry::PprzMessageTelemetry::DL_VALUE(telemetry::DL_VALUE_DATA::default());
+    let s = to_string(&m).unwrap();
+    println!("{}", s);
+    
+        /*
+    let m = telemetry::PprzMessageTelemetry::GPS_LLA(telemetry::GPS_LLA_DATA::default());
+    let s = to_string(&m).unwrap();
+    println!("{}", s);
+    */
+
+    let new_m: telemetry::DL_VALUE_DATA = from_str(&s).unwrap(); // This is an easier problem
+    //let new_m: telemetry::PprzMessageTelemetry = from_str(&s).unwrap();
+    println!("{:#?}", new_m);
 }

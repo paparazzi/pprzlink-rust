@@ -4,7 +4,7 @@ extern crate quote;
 use std::env;
 use std::fs::File;
 use std::path::Path;
-use std::io::Write;
+//use std::io::Write;
 
 mod parser;
 
@@ -14,8 +14,13 @@ fn main() {
     let mut inf = File::open(&in_path).unwrap();
 
     //let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path_rust = Path::new(".").join("common.rs");
-    let mut rustf = File::create(&dest_path_rust).unwrap();
+    //let dest_path_rust = Path::new(".").join("common.rs");
+    //let mut rustf = File::create(&dest_path_rust).unwrap();
+    //parser::generate(&mut inf, &mut rustf);
 
-    parser::generate(&mut inf, &mut rustf);
+    let dest_path_rust = Path::new(".");
+    parser::generate(&mut inf, &dest_path_rust);
+
+    // Dont run build.rs unless it is changed
+    println!("cargo:rerun-if-changed=build.rs");
 }

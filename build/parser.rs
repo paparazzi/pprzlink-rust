@@ -1,8 +1,11 @@
-use std::cmp::Ordering;
+//use std::cmp::Ordering;
 use changecase::ChangeCase;
 use std::collections::HashMap;
 use std::default::Default;
-use std::io::{Read, Write};
+//use std::io::{Read, Write};
+use std::io::Read;
+use std::path::Path;
+use std::fs::File;
 
 use xml::reader::{EventReader, XmlEvent};
 
@@ -74,6 +77,12 @@ impl PprzProfile {
             #(#msg_classes)*
         }
     }
+
+    fn emit_classes(&self) -> Vec<String> {
+        self.msg_classes.values()
+            .map(|d| d.name.clone())
+            .collect::<Vec<String>>()
+    }
 }
 
 
@@ -114,6 +123,12 @@ impl PprzMsgClass {
             .collect::<Vec<Tokens>>()
     }
 
+    fn emit_msg_names(&self) -> Vec<Tokens> {
+        self.messages.iter()
+            .map(|d| d.emit_msg_name())
+            .collect::<Vec<Tokens>>()
+    }
+
     /// A list of message IDs
     fn emit_msg_ids(&self) -> Vec<Tokens> {
         self.messages
@@ -137,14 +152,21 @@ impl PprzMsgClass {
         let enums = self.emit_enum_names();
         let enums_parse = enums.clone();
         let enums_msg_id = enums.clone();
+        let enums_msg_name = enums.clone();
         let enums_serialize = enums.clone();
 
         let msg_ids = self.emit_msg_ids();
         let msg_ids_parse = msg_ids.clone();
+        
+        let msg_names = self.emit_msg_names();
 
         quote!{
+            #[allow(non_camel_case_types)]
+            #[allow(non_snake_case)]
             pub mod #modname {
 
+            #[derive(Clone, PartialEq, Debug)]
+            #[derive(Serialize, Deserialize)]
             pub enum #enumname {
                 #(#enums(#structs)),*
             }
@@ -167,6 +189,12 @@ impl PprzMsgClass {
                     }
                 }
 
+                pub fn message_name(&self) -> String {
+                    use self::#enumname::*;
+                    match self {
+                        #(#enums_msg_name(..) => #msg_names.to_string(),)*
+                    }
+                }
                 /*
                 pub fn serialize(&self) -> Vec<u8> {
                     use self::#enumname::*;
@@ -206,6 +234,11 @@ impl PprzMessage {
         quote!(#name)
     }
 
+    fn emit_msg_name(&self) -> Tokens {
+        let name = Ident::from(format!("\"{}\"", self.name));
+        quote!(#name)
+    }
+
     fn emit_description(&self) -> Ident {
         match &self.description {
             Some(val) => {
@@ -237,7 +270,7 @@ impl PprzMessage {
 
         quote!{
             #description
-            #[derive(Clone, PartialEq, Default)]
+            #[derive(Clone, PartialEq, Default, Debug)]
             #[derive(Serialize, Deserialize)]
             pub struct #msg_name {
                 #(#name_types)*
@@ -297,10 +330,38 @@ impl PprzField {
     fn emit_name_type(&self) -> Tokens {
         let name = self.emit_name();
         let fieldtype = self.emit_type();
-        quote!(#name: #fieldtype,)
+        quote!(pub #name: #fieldtype,)
     }
 }
 
+/// Generate rust representation of pprzlink message set with appropriate conversion methods
+//pub fn generate<R: Read, W: Write>(input: &mut R, output_rust: &mut W) {
+pub fn generate<R: Read>(input: &mut R, output_rust_path: &Path) {
+    let profile = parse_profile(input);
+
+    // rust file
+    //let rust_tokens = profile.emit_rust();
+    //println!("{}", rust_tokens);
+    //writeln!(output_rust, "{}", rust_tokens).unwrap();
+    /*
+    let rust_src = rust_tokens.into_string();
+    let mut cfg = rustfmt::config::Config::default();
+    cfg.set().write_mode(rustfmt::config::WriteMode::Display);
+    rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(output_rust)).unwrap();
+    */    
+    
+    for (class_name, rust_tokens) in profile.emit_classes().iter().zip(profile.emit_msgs().iter()) {
+        let rust_src = rust_tokens.clone().into_string();
+        let mut cfg = rustfmt::config::Config::default();
+        cfg.set().write_mode(rustfmt::config::WriteMode::Display);
+
+        let dest_path_rust = output_rust_path.join(class_name.to_string() + ".rs");
+        let mut output_rust = File::create(&dest_path_rust).unwrap();
+        rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(&mut output_rust)).unwrap();
+    }    
+}
+
+/// XML parsing related type
 #[derive(Debug, PartialEq, Clone)]
 pub enum PprzType {
     UInt8,
@@ -554,19 +615,4 @@ pub fn parse_profile(file: &mut Read) -> PprzProfile {
         }
     }
     profile
-}
-
-/// Generate rust representation of pprzlink message set with appropriate conversion methods
-pub fn generate<R: Read, W: Write>(input: &mut R, output_rust: &mut W) {
-    let profile = parse_profile(input);
-
-    // rust file
-    let rust_tokens = profile.emit_rust();
-    //println!("{}", rust_tokens);
-    //writeln!(output_rust, "{}", rust_tokens).unwrap();
-
-    let rust_src = rust_tokens.into_string();
-    let mut cfg = rustfmt::config::Config::default();
-    cfg.set().write_mode(rustfmt::config::WriteMode::Display);
-    rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(output_rust)).unwrap();
 }
