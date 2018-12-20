@@ -320,16 +320,34 @@ impl PprzField {
     }
 
     fn emit_description(&self) -> Tokens {
-        let desc = match &self.description {
-            Some(val) => Ident::from(format!("\n/* {}*/\n",val)),
-            None => Ident::from(String::new()),
-        };
+        let mut desc = vec![];
+        if let Some(val) = self.description.clone() {
+            desc.push(format!("\n/// {}.",val));
+        }
+        if let Some(val) = self.format.clone() {
+            desc.push(format!("\n/// format: {}.",val));
+        }
+        if let Some(val) = self.unit.clone() {
+            desc.push(format!("\n/// unit: {}.",val));
+        }
+        if let Some(val) = self.alt_unit.clone() {
+            desc.push(format!("\n/// alt_unit: {}.",val));
+        }
+        if let Some(val) = self.alt_unit_coef.clone() {
+            desc.push(format!("\n/// alt_unit_coef: {}.",val));
+        }
+        if let Some(val) = self.values.clone() {
+            desc.push(format!("\n/// values: {:?}.",val));
+        }
+        desc.push("\n".to_string());
+        let desc: String = desc.iter().map(|s| s.to_string()).collect();
+        let desc = Ident::from(desc);
         quote!(#desc)
     }
 
     fn emit_name_type(&self) -> Tokens {
         let name = self.emit_name();
-        let fieldtype = self.emit_type();
+        let fieldtype = self.emit_type(); 
         quote!(pub #name: #fieldtype,)
     }
 }
@@ -393,7 +411,8 @@ impl PprzType {
     pub fn rust_type(&self) -> String {
         use self::PprzType::*;
         match self.clone() {
-            UInt8 | Char => "u8".into(),
+            UInt8 => "u8".into(),
+            Char => "char".into(),
             UInt16 => "u16".into(),
             UInt32 => "u32".into(),
             Int8 => "i8".into(),
@@ -405,8 +424,8 @@ impl PprzType {
             Double => "f64".into(),
             PprzString => "String".into(),
             Array(t, size) => match size {
-                0 => format!("Vec<{}> /* unspecified */", t.rust_type()),
-                _ => format!("Vec<{}> /* {} */", t.rust_type(), size),
+                0 => format!("Vec<{}> /* arbitrary length array */", t.rust_type()),
+                _ => format!("[{};{}] /* fixed length array */", t.rust_type(), size),
             }
                 
         }
