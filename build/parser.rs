@@ -3,9 +3,11 @@ use changecase::ChangeCase;
 use std::collections::HashMap;
 use std::default::Default;
 //use std::io::{Read, Write};
+use std::io::Write;
 use std::io::Read;
 use std::path::Path;
 use std::fs::File;
+use std::string::ToString;
 
 use xml::reader::{EventReader, XmlEvent};
 
@@ -78,6 +80,25 @@ impl PprzProfile {
         }
     }
 
+    fn emit_common(&self) -> Tokens {
+        //let classes = self.emit_classes();
+        quote!{
+            pub mod common {
+                use std::fmt::Display;
+            }
+            
+            ///#(#classes)*
+
+            /*
+            impl fmt::Display for Vec<T> {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    write!(f, "hello)")
+                }
+            }
+            */
+        }
+    }
+
     fn emit_classes(&self) -> Vec<String> {
         self.msg_classes.values()
             .map(|d| d.name.clone())
@@ -140,7 +161,6 @@ impl PprzMsgClass {
             .collect::<Vec<Tokens>>()
     }
 
-
     fn emit_rust(&self) -> Tokens {
         let comment = self.emit_comments();
         let msgs = self.emit_msgs();
@@ -148,25 +168,31 @@ impl PprzMsgClass {
         let enumname = Ident::from(format!("PprzMessage{}", self.name.to_capitalized()));
         let structs = self.emit_struct_names();
         let structs_parse = structs.clone();
+        let structs_from_str = structs.clone();
 
         let enums = self.emit_enum_names();
         let enums_parse = enums.clone();
         let enums_msg_id = enums.clone();
         let enums_msg_name = enums.clone();
         let enums_serialize = enums.clone();
+        let enums_display = enums.clone();
+        let enums_from_str = enums.clone();
 
         let msg_ids = self.emit_msg_ids();
         let msg_ids_parse = msg_ids.clone();
         
         let msg_names = self.emit_msg_names();
+        let msg_names_from_str = msg_names.clone();
+
 
         quote!{
             #[allow(non_camel_case_types)]
             #[allow(non_snake_case)]
             pub mod #modname {
+                use std::fmt;
 
             #[derive(Clone, PartialEq, Debug)]
-            #[derive(Serialize, Deserialize)]
+            //#[derive(Serialize, Deserialize)]
             pub enum #enumname {
                 #(#enums(#structs)),*
             }
@@ -195,6 +221,19 @@ impl PprzMsgClass {
                         #(#enums_msg_name(..) => #msg_names.to_string(),)*
                     }
                 }
+
+                
+                pub fn from_str(s: &str) -> Option<#enumname> {
+                    let mut input = s.chars();
+                    let name: String = input.by_ref().take_while(|x| *x!=' ').collect();
+                    use self::#enumname::*;
+                    match name.as_ref() {
+                        #(#msg_names_from_str => Some( #enums_from_str( #structs_from_str :: from_str(&mut input).unwrap() )), )*
+                        _ => None
+                    }
+                }
+                
+
                 /*
                 pub fn serialize(&self) -> Vec<u8> {
                     use self::#enumname::*;
@@ -203,6 +242,15 @@ impl PprzMsgClass {
                     }
                 }
                 */
+            }
+
+            impl fmt::Display for #enumname {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    use self::#enumname::*;
+                    match self {
+                        #(#enums_display(m) => m.fmt(f),)*
+                    }
+                }
             }
 
             #comment
@@ -263,17 +311,115 @@ impl PprzMessage {
             .collect::<Vec<Tokens>>()
     }
 
+    
+    fn emit_from_str(&self) -> Vec<Tokens> {
+        let from_string = self.fields.iter()
+            .map(|f| {
+                let name = f.emit_name();
+                match &f.fieldtype {
+                    PprzType::Array(t) => {
+                        let t = Ident::from(t.rust_type());
+                        quote!{
+                            loop {
+                                let val: String = _tmp.by_ref().take_while(|x| *x!=',').collect();
+                                if val.is_empty() {
+                                    break;
+                                }
+                                //println!("Parsing {}",val);
+                                _struct.#name.push(val.parse::<#t>().unwrap())
+                            }
+                        }
+                    }
+                    PprzType::Slice(t,l) => {
+                        let t = Ident::from(t.rust_type());
+                        let l = Ident::from(l.to_string());
+                        quote!{
+                            for idx in 0..#l {
+                                let val: String = _tmp.by_ref().take_while(|x| *x!=',').collect();
+                                //println!("Parsing {}",val);
+                                _struct.#name[idx] = val.parse::<#t>().unwrap();
+                            }
+                        }
+                    },
+                    _ => {
+                        let t = Ident::from(f.fieldtype.clone().rust_type());
+                        quote!{
+                            let val: String = _tmp.by_ref().take_while(|x| *x!=' ').collect();
+                            //println!("Parsing {}",val);
+                            _struct.#name = val.parse::<#t>().unwrap();
+                        }
+                    }
+                }
+            }).collect::<Vec<Tokens>>();
+        from_string
+    }
+
+
+    fn emit_display(&self) -> Tokens {
+        let to_string = self.fields.iter()
+            .map(|f| {
+                let name = f.emit_name();
+                match &f.fieldtype {
+                    PprzType::Array(_t) => {
+                        quote!{
+                            for val in &self.#name {
+                                tmp += &val.to_string();
+                                tmp+=",";
+                            }
+                        }
+                    },
+                    PprzType::Slice(_t,_l) => {
+                        quote!{
+                            for val in self.#name.iter() {
+                                tmp += &val.to_string();
+                                tmp+=",";
+                            }
+                        }
+                    }
+                    _ => quote!{
+                        tmp += &self.#name.to_string();
+                        tmp+=" ";
+                    }
+                }
+                }
+            ).collect::<Vec<Tokens>>();
+        let name = self.emit_msg_name();
+        quote!{
+            let mut tmp = String::new();
+            tmp += &#name;
+            tmp += " ";
+            #(#to_string)*
+            write!(f, "{}", tmp)
+        }
+    }
+
     fn emit_rust(&self) -> Tokens {
         let msg_name = self.emit_struct_name();
         let name_types = self.emit_name_types();
         let description = self.emit_description();
+        let display = self.emit_display();
+        let from_str = self.emit_from_str();
 
         quote!{
             #description
             #[derive(Clone, PartialEq, Default, Debug)]
-            #[derive(Serialize, Deserialize)]
+            //#[derive(Serialize, Deserialize)]
             pub struct #msg_name {
                 #(#name_types)*
+            }
+
+            impl fmt::Display for #msg_name {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    #display
+                }
+            }
+
+            impl #msg_name {
+                pub fn from_str(_tmp: &mut std::str::Chars) -> Option<Self> {
+                    let mut _struct = Self::default();
+                    #(#from_str)*
+                    Some(_struct)
+                }
             }
         }
     }
@@ -366,17 +512,28 @@ pub fn generate<R: Read>(input: &mut R, output_rust_path: &Path) {
     let mut cfg = rustfmt::config::Config::default();
     cfg.set().write_mode(rustfmt::config::WriteMode::Display);
     rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(output_rust)).unwrap();
-    */    
+    */  
+    let mut cfg = rustfmt::config::Config::default();
+    cfg.set().write_mode(rustfmt::config::WriteMode::Display);  
+    
     
     for (class_name, rust_tokens) in profile.emit_classes().iter().zip(profile.emit_msgs().iter()) {
         let rust_src = rust_tokens.clone().into_string();
-        let mut cfg = rustfmt::config::Config::default();
-        cfg.set().write_mode(rustfmt::config::WriteMode::Display);
-
+        
         let dest_path_rust = output_rust_path.join(class_name.to_string() + ".rs");
         let mut output_rust = File::create(&dest_path_rust).unwrap();
         rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(&mut output_rust)).unwrap();
+        //writeln!(output_rust, "{}", rust_tokens).unwrap();
     }    
+    
+
+    /*
+    // emit common
+    let rust_src = profile.emit_common().into_string();
+    let dest_path_rust = output_rust_path.join("common.rs");
+    let mut output_rust = File::create(&dest_path_rust).unwrap();
+    rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(&mut output_rust)).unwrap();
+    */
 }
 
 /// XML parsing related type
@@ -394,7 +551,8 @@ pub enum PprzType {
     Float,
     Double,
     PprzString,
-    Array(Box<PprzType>, usize),
+    Slice(Box<PprzType>, usize),
+    Array(Box<PprzType>),
 }
 
 impl Default for PprzType {
@@ -423,14 +581,10 @@ impl PprzType {
             Int64 => "i64".into(),
             Double => "f64".into(),
             PprzString => "String".into(),
-            Array(t, size) => match size {
-                0 => format!("Vec<{}> /* arbitrary length array */", t.rust_type()),
-                _ => format!("[{};{}] /* fixed length array */", t.rust_type(), size),
-            }
-                
+            Slice(t, size) => format!("[{};{}] /* fixed length array */", t.rust_type(), size),
+            Array(t) => format!("Vec<{}> /* arbitrary length array */", t.rust_type()),
         }
     }
-
 }
 
 /// If the array is unbounded, size is set to zero
@@ -450,15 +604,15 @@ fn parse_type(s: &str) -> Option<PprzType> {
         "float" => Some(Float),
         "double" => Some(Double),
         "string" => Some(PprzString),
+        "char[]" => Some(PprzString),
         _ => {
             if s.ends_with("]") {
                 let start = s.find("[").unwrap();
-                let size = match s[start + 1..(s.len() - 1)].parse::<usize>() {
-                    Ok(val) => val,
-                    Err(_) => 0,
-                };
                 let mtype = parse_type(&s[0..start]).unwrap();
-                Some(Array(Box::new(mtype), size))
+                match s[start + 1..(s.len() - 1)].parse::<usize>() {
+                    Ok(size) => Some(Slice(Box::new(mtype), size)),
+                    Err(_) => Some(Array(Box::new(mtype))),
+                }
             } else {
                 panic!("UNHANDLED {:?}", s);
             }

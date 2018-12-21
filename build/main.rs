@@ -1,3 +1,4 @@
+#![recursion_limit="256"]
 #[macro_use]
 extern crate quote;
 
@@ -18,7 +19,8 @@ fn main() {
     //let mut rustf = File::create(&dest_path_rust).unwrap();
     //parser::generate(&mut inf, &mut rustf);
 
-    let dest_path_rust = Path::new(".");
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let dest_path_rust = Path::new(&out_dir);
     parser::generate(&mut inf, &dest_path_rust);
 
     // Dont run build.rs unless it is changed
