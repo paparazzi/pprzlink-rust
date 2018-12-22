@@ -12,5 +12,22 @@ rustfmt = "0.9"
 changecase = "0.0.7"
 
 [dependencies]
-serde = "1.0"
-serde_derive = "1.0"
+bytes = "0.4"
+
+[dependencies.serde]
+version = "1.0"
+optional = true
+
+[dependencies.serde_derive]
+version = "1.0"
+optional = true
+
+[dependencies.serde_json]
+version = "1.0"
+optional = true
+
+[features]
+"serde-derive" = ["serde", "serde_derive","std"]
+"test-serde" = ["serde_json", "serde-derive"]
+std=[]
+default = ["std"]

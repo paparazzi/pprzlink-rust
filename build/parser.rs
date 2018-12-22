@@ -1,9 +1,7 @@
-//use std::cmp::Ordering;
 use changecase::ChangeCase;
 use std::collections::HashMap;
 use std::default::Default;
-//use std::io::{Read, Write};
-use std::io::Write;
+//use std::io::Write;
 use std::io::Read;
 use std::path::Path;
 use std::fs::File;
@@ -12,7 +10,6 @@ use std::string::ToString;
 use xml::reader::{EventReader, XmlEvent};
 
 use quote::{Ident, Tokens};
-//use rustfmt;
 
 /// XML elements, from messages.dtd file
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -57,46 +54,10 @@ pub struct PprzProfile {
 }
 
 impl PprzProfile {
-    /// Simple header comment
-    fn emit_comments(&self) -> Ident {
-        Ident::from(format!(
-            "/* This file was automatically generated, do not edit */\n"
-        ))
-    }
-
     fn emit_msgs(&self) -> Vec<Tokens> {
         self.msg_classes.values()
             .map(|d| d.emit_rust())
             .collect::<Vec<Tokens>>()
-    }
-
-    fn emit_rust(&self) -> Tokens {
-        let comment = self.emit_comments();
-        let msg_classes = self.emit_msgs();
-
-        quote!{
-            #comment
-            #(#msg_classes)*
-        }
-    }
-
-    fn emit_common(&self) -> Tokens {
-        //let classes = self.emit_classes();
-        quote!{
-            pub mod common {
-                use std::fmt::Display;
-            }
-            
-            ///#(#classes)*
-
-            /*
-            impl fmt::Display for Vec<T> {
-                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    write!(f, "hello)")
-                }
-            }
-            */
-        }
     }
 
     fn emit_classes(&self) -> Vec<String> {
@@ -115,9 +76,38 @@ pub struct PprzMsgClass {
 }
 
 impl PprzMsgClass {
+    fn emit_serde_derive() -> Ident {
+        #[cfg(feature = "serde-derive")]
+        return Ident::from("#[derive(Serialize, Deserialize)]");
+        #[cfg(not(feature = "serde-derive"))]
+        return Ident::from("");
+    }
+
+    fn emit_includes() -> Tokens {
+        let common = quote!{
+            use bytes::{Buf, BufMut, Bytes, IntoBuf};
+        };
+        #[cfg(not(feature = "std"))]
+        return quote!{
+            #common
+            use alloc::fmt;
+            use alloc::string::String;
+            use alloc::str::Chars;
+            use alloc::vec;
+            use alloc::vec::Vec;
+            use alloc::prelude::ToString;
+        };
+        #[cfg(feature = "std")]
+        return quote!{
+            #common
+            use std::fmt;
+            use std::str::Chars;
+        };
+    }
+
     fn emit_comments(&self) -> Ident {
         Ident::from(format!(
-            "/* This file was automatically generated, do not edit */\n"
+            "\n/* This file was automatically generated, do not edit */\n"
         ))
     }
 
@@ -184,29 +174,52 @@ impl PprzMsgClass {
         let msg_names = self.emit_msg_names();
         let msg_names_from_str = msg_names.clone();
 
+        let derive_serde = PprzMsgClass::emit_serde_derive();
+        let includes = PprzMsgClass::emit_includes();
 
         quote!{
+            #comment
             #[allow(non_camel_case_types)]
             #[allow(non_snake_case)]
             pub mod #modname {
-                use std::fmt;
+                #includes
 
             #[derive(Clone, PartialEq, Debug)]
-            //#[derive(Serialize, Deserialize)]
+            #derive_serde
             pub enum #enumname {
                 #(#enums(#structs)),*
             }
 
+            pub fn create_ivy_message(msg: &#enumname, sender: &str) -> String {
+                sender.to_string() + " " + &msg.to_string()
+            }
+
+            // TODO: should return the sender
+            pub fn parse_ivy_msg_any_sender(input: &str) -> Option<#enumname> {
+                parse_ivy_msg_from_sender(input, None)
+            }
+
+            // TODO: should return the sender
+            pub fn parse_ivy_msg_from_sender(input: &str, sender: Option<&str>) -> Option<#enumname> {
+                let mut input = input.chars();
+                let parsed_sender: String = input.by_ref().take_while(|x| *x!=' ').collect();
+                if let Some(expected_sender) = sender {
+                    if parsed_sender != expected_sender {
+                        // Senders don't match
+                        return None;
+                    }
+                }
+                #enumname::from_chars(&mut input)
+            }
+
             impl #enumname {
-                /*
-                pub fn parse(id: u8, payload: &[u8]) -> Option<#enumname> {
+                pub fn deser(id: u8, payload: &[u8]) -> Option<#enumname> {
                     use self::#enumname::*;
                     match id {
-                        #(#msg_ids_parse => Some(#enums_parse(#structs_parse::parse(payload))),)*
+                        #(#msg_ids_parse => Some(#enums_parse(#structs_parse::deser(payload).unwrap())),)*
                         _ => None,
                     }
                 }
-                */
 
                 pub fn message_id(&self) -> u8 {
                     use self::#enumname::*;
@@ -222,26 +235,26 @@ impl PprzMsgClass {
                     }
                 }
 
-                
                 pub fn from_str(s: &str) -> Option<#enumname> {
                     let mut input = s.chars();
+                    #enumname::from_chars(&mut input)
+                }
+                
+                pub fn from_chars(mut input: &mut Chars) -> Option<#enumname> {
                     let name: String = input.by_ref().take_while(|x| *x!=' ').collect();
                     use self::#enumname::*;
                     match name.as_ref() {
-                        #(#msg_names_from_str => Some( #enums_from_str( #structs_from_str :: from_str(&mut input).unwrap() )), )*
+                        #(#msg_names_from_str => Some( #enums_from_str( #structs_from_str :: from_chars(&mut input).unwrap() )), )*
                         _ => None
                     }
                 }
                 
-
-                /*
-                pub fn serialize(&self) -> Vec<u8> {
+                pub fn ser(&self) -> Vec<u8> {
                     use self::#enumname::*;
                     match self {
-                        #(&#enums_serialize(ref body) => body.serialize(),)*
+                        #(&#enums_serialize(ref body) => body.ser(),)*
                     }
                 }
-                */
             }
 
             impl fmt::Display for #enumname {
@@ -312,12 +325,13 @@ impl PprzMessage {
     }
 
     
-    fn emit_from_str(&self) -> Vec<Tokens> {
-        let from_string = self.fields.iter()
+    fn emit_from_str(&self) -> Tokens {
+        let from_str = self.fields.iter()
             .map(|f| {
                 let name = f.emit_name();
+                use self::PprzType::*;
                 match &f.fieldtype {
-                    PprzType::Array(t) => {
+                    Array(t) => {
                         let t = Ident::from(t.rust_type());
                         quote!{
                             loop {
@@ -325,18 +339,16 @@ impl PprzMessage {
                                 if val.is_empty() {
                                     break;
                                 }
-                                //println!("Parsing {}",val);
                                 _struct.#name.push(val.parse::<#t>().unwrap())
                             }
                         }
                     }
-                    PprzType::Slice(t,l) => {
+                    Slice(t,l) => {
                         let t = Ident::from(t.rust_type());
                         let l = Ident::from(l.to_string());
                         quote!{
                             for idx in 0..#l {
                                 let val: String = _tmp.by_ref().take_while(|x| *x!=',').collect();
-                                //println!("Parsing {}",val);
                                 _struct.#name[idx] = val.parse::<#t>().unwrap();
                             }
                         }
@@ -345,22 +357,39 @@ impl PprzMessage {
                         let t = Ident::from(f.fieldtype.clone().rust_type());
                         quote!{
                             let val: String = _tmp.by_ref().take_while(|x| *x!=' ').collect();
-                            //println!("Parsing {}",val);
                             _struct.#name = val.parse::<#t>().unwrap();
                         }
                     }
                 }
             }).collect::<Vec<Tokens>>();
-        from_string
+        quote!{
+            let mut _struct = Self::default();
+            #(#from_str)*
+            Some(_struct)
+        }
     }
 
+    fn emit_serialize_vars(&self) -> Tokens {
+        let ser_vars = self.fields.iter()
+            .map(|f| {
+                let name = Ident::from("self.".to_string() + &f.name.clone());
+                let buf = Ident::from("_tmp");
+                f.fieldtype.rust_writer(name, buf)
+            }).collect::<Vec<Tokens>>();
+            quote!{
+                let mut _tmp = vec![];
+                #(#ser_vars)*
+                _tmp
+            }
+    }
 
     fn emit_display(&self) -> Tokens {
         let to_string = self.fields.iter()
             .map(|f| {
                 let name = f.emit_name();
+                use self::PprzType::*;
                 match &f.fieldtype {
-                    PprzType::Array(_t) => {
+                    Array(_t) => {
                         quote!{
                             for val in &self.#name {
                                 tmp += &val.to_string();
@@ -368,7 +397,7 @@ impl PprzMessage {
                             }
                         }
                     },
-                    PprzType::Slice(_t,_l) => {
+                    Slice(_t,_l) => {
                         quote!{
                             for val in self.#name.iter() {
                                 tmp += &val.to_string();
@@ -381,8 +410,7 @@ impl PprzMessage {
                         tmp+=" ";
                     }
                 }
-                }
-            ).collect::<Vec<Tokens>>();
+            }).collect::<Vec<Tokens>>();
         let name = self.emit_msg_name();
         quote!{
             let mut tmp = String::new();
@@ -399,11 +427,13 @@ impl PprzMessage {
         let description = self.emit_description();
         let display = self.emit_display();
         let from_str = self.emit_from_str();
+        let derive_serde = PprzMsgClass::emit_serde_derive();
+        let serialize_vars = self.emit_serialize_vars();
 
         quote!{
             #description
             #[derive(Clone, PartialEq, Default, Debug)]
-            //#[derive(Serialize, Deserialize)]
+            #derive_serde
             pub struct #msg_name {
                 #(#name_types)*
             }
@@ -415,10 +445,16 @@ impl PprzMessage {
             }
 
             impl #msg_name {
-                pub fn from_str(_tmp: &mut std::str::Chars) -> Option<Self> {
-                    let mut _struct = Self::default();
-                    #(#from_str)*
-                    Some(_struct)
+                pub fn from_chars(_tmp: &mut Chars) -> Option<Self> {
+                    #from_str
+                }
+
+                pub fn ser(&self) -> Vec<u8> {
+                    #serialize_vars
+                }
+
+                pub fn deser(_input: &[u8]) -> Option<Self> {
+                    None
                 }
             }
         }
@@ -583,6 +619,77 @@ impl PprzType {
             PprzString => "String".into(),
             Slice(t, size) => format!("[{};{}] /* fixed length array */", t.rust_type(), size),
             Array(t) => format!("Vec<{}> /* arbitrary length array */", t.rust_type()),
+        }
+    }
+/*
+    pub fn rust_reader(&self, val: Ident, buf: Ident) -> Tokens {
+        use self::PprzType::*;
+        match self.clone() {
+            UInt8 => quote!{#buf.write_u8(#val).unwrap();},
+            Char => quote!{#buf.write_u8(#val as u8).unwrap();},
+            UInt16 => quote!{#buf.write_u16::<LittleEndian>(#val).unwrap();},
+            UInt32 => quote!{#buf.write_u32::<LittleEndian>(#val).unwrap();},
+            Int8 => quote!{#buf.write_i8(#val).unwrap();},
+            Int16 => quote!{#buf.write_i16::<LittleEndian>(#val).unwrap();},
+            Int32 => quote!{#buf.write_i32::<LittleEndian>(#val).unwrap();},
+            Float => quote!{#buf.write_f32::<LittleEndian>(#val).unwrap();},
+            UInt64 => quote!{#buf.write_u64::<LittleEndian>(#val).unwrap();},
+            Int64 => quote!{#buf.write_i64::<LittleEndian>(#val).unwrap();},
+            Double => quote!{#buf.write_f64::<LittleEndian>(#val).unwrap();},
+            PprzString => quote!{#buf.extend_from_slice(#val.as_bytes());},
+            Array(t) => {
+                let w = t.rust_writer_inner(val.clone(), buf.clone());
+                quote!{
+                    for val in #val {
+                        #w
+                    }
+                }
+            },
+            Slice(t, _size) => {
+                let w = t.rust_writer_inner(val.clone(), buf.clone());
+                quote!{
+                    for val in #val.iter() {
+                        #w
+                    }
+                }
+            }
+        }
+    }
+    */
+
+    pub fn rust_writer(&self, val: Ident, buf: Ident) -> Tokens {
+        use self::PprzType::*;
+        match self.clone() {
+            UInt8 => quote!{#buf.put_u8(#val);},
+            Char => quote!{#buf.put_u8(#val as u8);},
+            UInt16 => quote!{#buf.put_u16_le(#val);},
+            UInt32 => quote!{#buf.put_u32_le(#val);},
+            Int8 => quote!{#buf.put_i8(#val);},
+            Int16 => quote!{#buf.put_i16_le(#val);},
+            Int32 => quote!{#buf.put_i32_le(#val);},
+            Float => quote!{#buf.put_f32_(#val);},
+            UInt64 => quote!{#buf.put_u64_le(#val);},
+            Int64 => quote!{#buf.put_i64_le(#val);},
+            Double => quote!{#buf.put_f64_le(#val);},
+            PprzString => quote!{#buf.put_slice(#val.as_bytes());},
+            Array(t) => {
+                let w = t.rust_writer(Ident::from("*val"), buf.clone());
+                quote!{
+                    #buf.push(#val.len() as u8);
+                    for val in &#val {
+                        #w
+                    }
+                }
+            },
+            Slice(t, _size) => {
+                let w = t.rust_writer(Ident::from("*val"), buf.clone());
+                quote!{
+                    #buf.push(#val.len() as u8);
+                    for val in #val.iter() {
+                        #w
+                    }
+                }
+            }
         }
     }
 }

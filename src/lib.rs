@@ -1,9 +1,21 @@
-//#[macro_use]
-//extern crate serde_derive;
-//extern crate serde;
+/*
+#![cfg(not(feature = "std"))]
+#![no_std]
+#![cfg(not(feature = "std"))]
+#![feature(alloc)]
+#[cfg(not(feature = "std"))]
+extern crate alloc;
 
+#[cfg(feature = "serde-derive")]
+#[macro_use]
+#[cfg(feature = "serde-derive")]
+extern crate serde_derive;
+#[cfg(feature = "serde-derive")]
+extern crate serde;
 
-/// Pprzlink message set
+*/
+// Pprzlink message set
+// Note: the unused code will be optimized away
 // TODO: make a macro?
 include!(concat!(env!("OUT_DIR"), "/telemetry.rs"));
 include!(concat!(env!("OUT_DIR"), "/ground.rs"));
@@ -11,192 +23,145 @@ include!(concat!(env!("OUT_DIR"), "/datalink.rs"));
 include!(concat!(env!("OUT_DIR"), "/alert.rs"));
 include!(concat!(env!("OUT_DIR"), "/intermcu.rs"));
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+    
+  
+    //use crate::datalink;
+    //use crate::ground;
+    //use crate::telemetry;
+    #[cfg(feature = "std")]
+    use std::io::BufRead;
 
+    #[cfg(feature = "test-serde")]
+    use serde_json;
 
-mod test {
-    use crate::telemetry;
-    use crate::ground;
-    use crate::datalink;
-
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
+    use bytes::{Buf, Bytes, BytesMut, BufMut, IntoBuf};
 
     #[test]
+    fn test_bytes() {
+        let v = vec![1,2,0,4];
+        let mut buf = Bytes::from(v.as_slice()).into_buf();
+        //let mut t = buf.take(1);
+        assert_eq!(1, buf.get_u8());
+        assert_eq!(2, buf.get_u8());
+        assert_eq!(4, buf.get_u16_be());
+        /*
+        let mut v = vec![8;128];
+        let mut buf = v.as_mut_slice();
+        println!("{}",buf.len());
+        
+        println!("{}",buf.len());
+        */
+    }
+/*
+    /// Simple test with Serde to JSON format
+    /// Note: this seems to take a lot of time to compile, the performance is unknown
+    #[cfg(feature = "test-serde")]
+    #[test]
+    fn test_serde() {
+        let m = telemetry::PprzMessageTelemetry::NPS_RATE_ATTITUDE(
+            telemetry::NPS_RATE_ATTITUDE_DATA::default(),
+        );
+        let s = serde_json::to_string(&m).unwrap();
+        println!("{}", s);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
     fn test1() {
-        let m = telemetry::PprzMessageTelemetry::NPS_RATE_ATTITUDE(telemetry::NPS_RATE_ATTITUDE_DATA::default());
-        //let m = telemetry::NPS_RATE_ATTITUDE_DATA::default();
+        let m = telemetry::PprzMessageTelemetry::NPS_RATE_ATTITUDE(
+            telemetry::NPS_RATE_ATTITUDE_DATA::default(),
+        );
         let s = m.to_string();
         println!("{}", s);
         let msg = telemetry::PprzMessageTelemetry::from_str(&s);
         println!("{:#?}", msg);
     }
 
+    /// Test parsing for a sender
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_sender() {
+        let input = "42 GPS_LLA 418155620 -1119824356 1989372 1349981 901 1 0 1794 10805 3 0";
+        let res = telemetry::parse_ivy_msg_from_sender(input, Some("42"));
+        assert_ne!(res, None);
+        let msg = res.unwrap();
+        let res = telemetry::create_ivy_message(&msg, "42");
+        println!("res={}",res);
+    }
+
+    #[cfg(feature = "std")]
     #[test]
     fn big_test() {
-    let f = File::open("./test.txt").unwrap();
-    let mut cnt = 0;
-    for line in BufReader::new(f).lines() {
-        cnt = cnt + 1;
-        let l = line.unwrap();
-        let mut input: Vec<&str> = l.split(&[' '][..]).collect();
-        input.remove(0);
-        let l: String = input.iter().map(|a| String::from(*a) + " ").collect();
-        let mut l: Vec<char> = l.chars().collect();
-        l.pop();
-        let l: String = l.iter().collect();
+        let f = std::fs::File::open("./test.txt").unwrap();
+        let mut cnt = 0;
+        for line in std::io::BufReader::new(f).lines() {
+            cnt = cnt + 1;
+            let l = line.unwrap();
+            let mut input: Vec<&str> = l.split(&[' '][..]).collect();
+            input.remove(0);
+            let l: String = input.iter().map(|a| String::from(*a) + " ").collect();
+            let mut l: Vec<char> = l.chars().collect();
+            l.pop();
+            let l: String = l.iter().collect();
 
-        println!(">>>>>>>>>>>>>>>>>>");
-        println!("Line # {}= >{}<",cnt,l);
-        let msg = telemetry::PprzMessageTelemetry::from_str(&l);
-        match msg {
-            Some(m) => {
-                println!("line {}, telemetry:, {:#?}", cnt, m);
-                let s = m.to_string();
-                println!("line to string: {}",s);
-                let v =  telemetry::PprzMessageTelemetry::from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
+            println!(">>>>>>>>>>>>>>>>>>");
+            println!("Line # {}= >{}<", cnt, l);
+            let msg = telemetry::PprzMessageTelemetry::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, telemetry:, {:#?}", cnt, m);
+                    let s = m.to_string();
+                    println!("line to string: {}", s);
+                    let v = telemetry::PprzMessageTelemetry::from_str(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not telemetry msg:-( ");
+                }
             }
-            None => {
-                println!("Not telemetry msg:-( ");
+
+            let msg = ground::PprzMessageGround::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, ground:, {:#?}", cnt, m);
+                    let s = m.to_string();
+                    println!("line to string: {}", s);
+                    let v = ground::PprzMessageGround::from_str(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not ground msg:-( ");
+                }
             }
+
+            let msg = datalink::PprzMessageDatalink::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, datalink:, {:#?}", cnt, m);
+                    let s = m.to_string();
+                    println!("line to string: {}", s);
+                    let v = datalink::PprzMessageDatalink::from_str(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not datalink msg:-(");
+                }
+            }
+
+            panic!("Unrecognized input: {}", l);
         }
-
-        let msg =ground::PprzMessageGround::from_str(&l);
-        match msg {
-            Some(m) => {
-                println!("line {}, ground:, {:#?}", cnt, m);
-                let s = m.to_string();
-                println!("line to string: {}",s);
-                let v = ground::PprzMessageGround::from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
-            }
-            None => {
-                println!("Not ground msg:-( ");
-            }
-        }
-
-        let msg = datalink::PprzMessageDatalink::from_str(&l);
-        match msg {
-            Some(m) => {
-                println!("line {}, datalink:, {:#?}", cnt, m);
-                let s = m.to_string();
-                println!("line to string: {}",s);
-                let v = datalink::PprzMessageDatalink::from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
-            }
-            None => {
-                println!("Not datalink msg:-(");
-            }
-        }
-
-        panic!("Unrecognized input: {}", l);
-    }
-    }
-}
-
-/*
-struct ExtendVec<T>(Vec<T>);
-
-impl std::fmt::Display for ExtendVec<f32> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let mut s = String::new();
-        for val in &self.0 {
-            s += &val.to_string();
-            s += ",";
-        }
-        write!(f, "{}", s)
-    }
-}
-
-impl<T> Into<Vec<T>> for ExtendVec<T> {
-    fn into(self) -> Vec<T> {
-        self.0
-    }
-}
-
-impl<T> From<Vec<T>> for ExtendVec<T> {
-    fn from(v: Vec<T>) -> ExtendVec<T> {
-        ExtendVec(v)
-    }
-}
-*/
-
-// TODO: fix parsing arrays
-//fn main() {  
-    //let m = telemetry::PprzMessageTelemetry::NPS_RATE_ATTITUDE(telemetry::NPS_RATE_ATTITUDE_DATA::default());
-    //let s = m.to_string();
-    //println!("{:#?}", m);
-
-    /*
-    let f = File::open("./test.txt").unwrap();
-    let mut cnt = 0;
-    for line in BufReader::new(f).lines() {
-        cnt = cnt + 1;
-        let l = line.unwrap();
-        let mut input: Vec<&str> = l.split(&[' '][..]).collect();
-        input.remove(0);
-        let l: String = input.iter().map(|a| String::from(*a) + " ").collect();
-        let mut l: Vec<char> = l.chars().collect();
-        l.pop();
-        let l: String = l.iter().collect();
-
-        println!(">>>>>>>>>>>>>>>>>>");
-        println!("Line # {}= >{}<",cnt,l);
-        let msg: Result<telemetry::PprzMessageTelemetry> = from_str(&l);
-        match msg {
-            Ok(m) => {
-                println!("line {}, telemetry:, {:#?}", cnt, m);
-                let s = to_string(&m).unwrap();
-                println!("line to string: {}",s);
-                let v: telemetry::PprzMessageTelemetry = from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
-            }
-            Err(e) => {
-                println!("Not telemetry msg:-( Err: {:?}",e);
-            }
-        }
-
-        let msg: Result<ground::PprzMessageGround> = from_str(&l);
-        match msg {
-            Ok(m) => {
-                println!("line {}, ground:, {:#?}", cnt, m);
-                let s = to_string(&m).unwrap();
-                println!("line to string: {}",s);
-                let v: ground::PprzMessageGround = from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
-            }
-            Err(e) => {
-                println!("Not ground msg:-( Err: {:?}",e);
-            }
-        }
-
-        let msg: Result<datalink::PprzMessageDatalink> = from_str(&l);
-        match msg {
-            Ok(m) => {
-                println!("line {}, datalink:, {:#?}", cnt, m);
-                let s = to_string(&m).unwrap();
-                println!("line to string: {}",s);
-                let v: datalink::PprzMessageDatalink = from_str(&s).unwrap();
-                println!("{:#?}", v);
-                println!("<<<<<<<<<<<<<<<");
-                continue;
-            }
-            Err(e) => {
-                println!("Not datalink msg:-( Err: {:?}",e);
-            }
-        }
-
-        panic!("Unrecognized input: {}", l);
     }
     */
-//}
+}
