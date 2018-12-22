@@ -170,6 +170,7 @@ impl PprzMsgClass {
 
         let msg_ids = self.emit_msg_ids();
         let msg_ids_parse = msg_ids.clone();
+        let msg_ids_ser = msg_ids.clone();
         
         let msg_names = self.emit_msg_names();
         let msg_names_from_str = msg_names.clone();
@@ -195,11 +196,6 @@ impl PprzMsgClass {
             }
 
             // TODO: should return the sender
-            pub fn parse_ivy_msg_any_sender(input: &str) -> Option<#enumname> {
-                parse_ivy_msg_from_sender(input, None)
-            }
-
-            // TODO: should return the sender
             pub fn parse_ivy_msg_from_sender(input: &str, sender: Option<&str>) -> Option<#enumname> {
                 let mut input = input.chars();
                 let parsed_sender: String = input.by_ref().take_while(|x| *x!=' ').collect();
@@ -213,22 +209,23 @@ impl PprzMsgClass {
             }
 
             impl #enumname {
-                pub fn deser(id: u8, payload: &[u8]) -> Option<#enumname> {
+                pub fn deser(payload: &[u8]) -> Option<#enumname> {
                     use self::#enumname::*;
+                    let id = payload[0];
                     match id {
-                        #(#msg_ids_parse => Some(#enums_parse(#structs_parse::deser(payload).unwrap())),)*
+                        #(#msg_ids_parse => Some(#enums_parse(#structs_parse::deser(&payload[1..]).unwrap())),)*
                         _ => None,
                     }
                 }
 
-                pub fn message_id(&self) -> u8 {
+                fn message_id(&self) -> u8 {
                     use self::#enumname::*;
                     match self {
                         #(#enums_msg_id(..) => #msg_ids,)*
                     }
                 }
 
-                pub fn message_name(&self) -> String {
+                fn message_name(&self) -> String {
                     use self::#enumname::*;
                     match self {
                         #(#enums_msg_name(..) => #msg_names.to_string(),)*
@@ -240,7 +237,7 @@ impl PprzMsgClass {
                     #enumname::from_chars(&mut input)
                 }
                 
-                pub fn from_chars(mut input: &mut Chars) -> Option<#enumname> {
+                fn from_chars(mut input: &mut Chars) -> Option<#enumname> {
                     let name: String = input.by_ref().take_while(|x| *x!=' ').collect();
                     use self::#enumname::*;
                     match name.as_ref() {
@@ -250,10 +247,15 @@ impl PprzMsgClass {
                 }
                 
                 pub fn ser(&self) -> Vec<u8> {
+                    let mut v = Vec::new();
                     use self::#enumname::*;
                     match self {
-                        #(&#enums_serialize(ref body) => body.ser(),)*
+                        #(&#enums_serialize(ref body) => {
+                                v.push(#msg_ids_ser);
+                                v.append(&mut body.ser());
+                            },)*
                     }
+                    v
                 }
             }
 
@@ -386,13 +388,22 @@ impl PprzMessage {
     fn emit_deserialize_vars(&self) -> Tokens {
         let deser_vars = self.fields.iter()
             .map(|f| {
-                let name = Ident::from("self.".to_string() + &f.name.clone());
+                let name = Ident::from("_struct.".to_string() + &f.name.clone());
                 let buf = Ident::from("buf");
                 f.fieldtype.rust_reader(name, buf)
             }).collect::<Vec<Tokens>>();
-            quote!{
-                let mut buf = Bytes::from(input).into_buf();
-                #(#deser_vars)*
+            if deser_vars.is_empty() {
+                // struct has no fields
+                quote!{
+                    Some(Self::default())
+                }
+            } else {
+                quote!{
+                    let mut buf = Bytes::from(_input).into_buf();
+                    let mut _struct = Self::default();
+                    #(#deser_vars)*
+                    Some(_struct)
+                }
             }
     }
 
@@ -467,7 +478,7 @@ impl PprzMessage {
                     #serialize_vars
                 }
 
-                pub fn deser(input: &[u8]) -> Option<Self> {
+                pub fn deser(_input: &[u8]) -> Option<Self> {
                     #deser_vars
                 }
             }
@@ -638,7 +649,48 @@ impl PprzType {
 
     pub fn rust_reader(&self, val: Ident, buf: Ident) -> Tokens {
         use self::PprzType::*;
-        unimplemented!();
+        match self.clone() {
+            Char => quote!{#val = #buf.get_u8() as char;},
+            UInt8 => quote!{#val = #buf.get_u8();},
+            UInt16 => quote!{#val = #buf.get_u16_le();},
+            UInt32 => quote!{#val = #buf.get_u32_le();},
+            UInt64 => quote!{#val = #buf.get_u64_le();},
+            Int8 => quote!{#val = #buf.get_i8();},
+            Int16 => quote!{#val = #buf.get_i16_le();},
+            Int32 => quote!{#val = #buf.get_i32_le();},
+            Int64 => quote!{#val = #buf.get_i64_le();},
+            Float => quote!{#val = #buf.get_f32_le();},
+            Double => quote!{#val = #buf.get_f64_le();},
+            PprzString => quote!{
+                let s_len = #buf.get_u8() as usize;
+                let mut s_vec = Vec::with_capacity(s_len);
+                for _ in 0..s_len {
+                    s_vec.push(#buf.get_u8());
+                }
+                #val = String::from_utf8(s_vec).unwrap();
+            },
+            Array(t) => {
+                    let r = t.rust_reader(Ident::from("let val"), buf.clone());
+                    quote!{
+                        let s_len = #buf.get_u8() as usize;
+                        for _ in 0..s_len {
+                            #r
+                            #val.push(val);
+                    }
+                }
+            },
+            Slice(t, _size) => {
+                let r = t.rust_reader(Ident::from("let val"), buf.clone());
+                quote!{
+                    // Not sure if we read length of slices
+                    //let s_len = #buf.get_u8() as usize;
+                    for idx in 0..#val.len() {
+                        #r
+                        #val[idx] = val;
+                    }
+                }
+            }
+        }
     }
 
     pub fn rust_writer(&self, val: Ident, buf: Ident) -> Tokens {
@@ -655,11 +707,14 @@ impl PprzType {
             UInt64 => quote!{#buf.put_u64_le(#val);},
             Int64 => quote!{#buf.put_i64_le(#val);},
             Double => quote!{#buf.put_f64_le(#val);},
-            PprzString => quote!{#buf.put_slice(#val.as_bytes());},
+            PprzString => quote!{
+                #buf.put_u8(#val.as_bytes().len() as u8);
+                #buf.put_slice(#val.as_bytes());
+                },
             Array(t) => {
                 let w = t.rust_writer(Ident::from("*val"), buf.clone());
                 quote!{
-                    #buf.push(#val.len() as u8);
+                    #buf.put_u8(#val.len() as u8);
                     for val in &#val {
                         #w
                     }
@@ -668,7 +723,8 @@ impl PprzType {
             Slice(t, _size) => {
                 let w = t.rust_writer(Ident::from("*val"), buf.clone());
                 quote!{
-                    #buf.push(#val.len() as u8);
+                    // Not sure if we specify the length for slices?
+                    //#buf.put_u8(#val.len() as u8);
                     for val in #val.iter() {
                         #w
                     }
