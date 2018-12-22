@@ -383,6 +383,19 @@ impl PprzMessage {
             }
     }
 
+    fn emit_deserialize_vars(&self) -> Tokens {
+        let deser_vars = self.fields.iter()
+            .map(|f| {
+                let name = Ident::from("self.".to_string() + &f.name.clone());
+                let buf = Ident::from("buf");
+                f.fieldtype.rust_reader(name, buf)
+            }).collect::<Vec<Tokens>>();
+            quote!{
+                let mut buf = Bytes::from(input).into_buf();
+                #(#deser_vars)*
+            }
+    }
+
     fn emit_display(&self) -> Tokens {
         let to_string = self.fields.iter()
             .map(|f| {
@@ -429,6 +442,7 @@ impl PprzMessage {
         let from_str = self.emit_from_str();
         let derive_serde = PprzMsgClass::emit_serde_derive();
         let serialize_vars = self.emit_serialize_vars();
+        let deser_vars = self.emit_deserialize_vars();
 
         quote!{
             #description
@@ -453,8 +467,8 @@ impl PprzMessage {
                     #serialize_vars
                 }
 
-                pub fn deser(_input: &[u8]) -> Option<Self> {
-                    None
+                pub fn deser(input: &[u8]) -> Option<Self> {
+                    #deser_vars
                 }
             }
         }
@@ -621,41 +635,11 @@ impl PprzType {
             Array(t) => format!("Vec<{}> /* arbitrary length array */", t.rust_type()),
         }
     }
-/*
+
     pub fn rust_reader(&self, val: Ident, buf: Ident) -> Tokens {
         use self::PprzType::*;
-        match self.clone() {
-            UInt8 => quote!{#buf.write_u8(#val).unwrap();},
-            Char => quote!{#buf.write_u8(#val as u8).unwrap();},
-            UInt16 => quote!{#buf.write_u16::<LittleEndian>(#val).unwrap();},
-            UInt32 => quote!{#buf.write_u32::<LittleEndian>(#val).unwrap();},
-            Int8 => quote!{#buf.write_i8(#val).unwrap();},
-            Int16 => quote!{#buf.write_i16::<LittleEndian>(#val).unwrap();},
-            Int32 => quote!{#buf.write_i32::<LittleEndian>(#val).unwrap();},
-            Float => quote!{#buf.write_f32::<LittleEndian>(#val).unwrap();},
-            UInt64 => quote!{#buf.write_u64::<LittleEndian>(#val).unwrap();},
-            Int64 => quote!{#buf.write_i64::<LittleEndian>(#val).unwrap();},
-            Double => quote!{#buf.write_f64::<LittleEndian>(#val).unwrap();},
-            PprzString => quote!{#buf.extend_from_slice(#val.as_bytes());},
-            Array(t) => {
-                let w = t.rust_writer_inner(val.clone(), buf.clone());
-                quote!{
-                    for val in #val {
-                        #w
-                    }
-                }
-            },
-            Slice(t, _size) => {
-                let w = t.rust_writer_inner(val.clone(), buf.clone());
-                quote!{
-                    for val in #val.iter() {
-                        #w
-                    }
-                }
-            }
-        }
+        unimplemented!();
     }
-    */
 
     pub fn rust_writer(&self, val: Ident, buf: Ident) -> Tokens {
         use self::PprzType::*;
@@ -667,7 +651,7 @@ impl PprzType {
             Int8 => quote!{#buf.put_i8(#val);},
             Int16 => quote!{#buf.put_i16_le(#val);},
             Int32 => quote!{#buf.put_i32_le(#val);},
-            Float => quote!{#buf.put_f32_(#val);},
+            Float => quote!{#buf.put_f32_le(#val);},
             UInt64 => quote!{#buf.put_u64_le(#val);},
             Int64 => quote!{#buf.put_i64_le(#val);},
             Double => quote!{#buf.put_f64_le(#val);},
