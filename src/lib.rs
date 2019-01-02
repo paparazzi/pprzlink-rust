@@ -1,11 +1,7 @@
 #![cfg(all(not(test), not(feature = "std")))]
 #![no_std]
-//#![cfg(not(feature = "std"))]
-//#![no_std]
-//#![cfg(not(feature = "std"))]
 #![cfg(all(not(test), not(feature = "std")))]
 #![feature(alloc)]
-//#![cfg(not(feature = "std"))]
 #![cfg(all(not(test), not(feature = "std")))]
 extern crate alloc;
 

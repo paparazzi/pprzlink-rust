@@ -162,8 +162,6 @@ impl PprzMsgClass {
 
         let enums = self.emit_enum_names();
         let enums_parse = enums.clone();
-        //let enums_msg_id = enums.clone();
-        //let enums_msg_name = enums.clone();
         let enums_serialize = enums.clone();
         let enums_display = enums.clone();
         let enums_from_str = enums.clone();
@@ -218,24 +216,6 @@ impl PprzMsgClass {
                     }
                 }
 
-                /*
-                fn message_id(&self) -> u8 {
-                    use self::#enumname::*;
-                    match self {
-                        #(#enums_msg_id(..) => #msg_ids,)*
-                    }
-                }
-                */
-
-                /*
-                fn message_name(&self) -> String {
-                    use self::#enumname::*;
-                    match self {
-                        #(#enums_msg_name(..) => #msg_names.to_string(),)*
-                    }
-                }
-                */
-
                 pub fn from_str(s: &str) -> Option<#enumname> {
                     let mut input = s.chars();
                     #enumname::from_chars(&mut input)
@@ -252,12 +232,6 @@ impl PprzMsgClass {
                 
                 pub fn ser(&self) -> Vec<u8> {
                     let mut v = Vec::new();
-                    /*
-                    v.push(self.message_id());
-                    v.append(&mut self.ser());
-                    v
-                    */
-                    
                     use self::#enumname::*;
                     match self {
                         #(&#enums_serialize(ref body) => {
@@ -573,20 +547,8 @@ impl PprzField {
 //pub fn generate<R: Read, W: Write>(input: &mut R, output_rust: &mut W) {
 pub fn generate<R: Read>(input: &mut R, output_rust_path: &Path) {
     let profile = parse_profile(input);
-
-    // rust file
-    //let rust_tokens = profile.emit_rust();
-    //println!("{}", rust_tokens);
-    //writeln!(output_rust, "{}", rust_tokens).unwrap();
-    /*
-    let rust_src = rust_tokens.into_string();
-    let mut cfg = rustfmt::config::Config::default();
-    cfg.set().write_mode(rustfmt::config::WriteMode::Display);
-    rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(output_rust)).unwrap();
-    */  
     let mut cfg = rustfmt::config::Config::default();
     cfg.set().write_mode(rustfmt::config::WriteMode::Display);  
-    
     
     for (class_name, rust_tokens) in profile.emit_classes().iter().zip(profile.emit_msgs().iter()) {
         let rust_src = rust_tokens.clone().into_string();
@@ -594,17 +556,7 @@ pub fn generate<R: Read>(input: &mut R, output_rust_path: &Path) {
         let dest_path_rust = output_rust_path.join(class_name.to_string() + ".rs");
         let mut output_rust = File::create(&dest_path_rust).unwrap();
         rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(&mut output_rust)).unwrap();
-        //writeln!(output_rust, "{}", rust_tokens).unwrap();
     }    
-    
-
-    /*
-    // emit common
-    let rust_src = profile.emit_common().into_string();
-    let dest_path_rust = output_rust_path.join("common.rs");
-    let mut output_rust = File::create(&dest_path_rust).unwrap();
-    rustfmt::format_input(rustfmt::Input::Text(rust_src), &cfg, Some(&mut output_rust)).unwrap();
-    */
 }
 
 /// XML parsing related type
@@ -692,8 +644,6 @@ impl PprzType {
             Slice(t, _size) => {
                 let r = t.rust_reader(Ident::from("let val"), buf.clone());
                 quote!{
-                    // Not sure if we read length of slices
-                    //let s_len = #buf.get_u8() as usize;
                     for idx in 0..#val.len() {
                         #r
                         #val[idx] = val;
@@ -733,8 +683,6 @@ impl PprzType {
             Slice(t, _size) => {
                 let w = t.rust_writer(Ident::from("*val"), buf.clone());
                 quote!{
-                    // Not sure if we specify the length for slices?
-                    //#buf.put_u8(#val.len() as u8);
                     for val in #val.iter() {
                         #w
                     }
