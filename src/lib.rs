@@ -1,9 +1,12 @@
-/*
-#![cfg(not(feature = "std"))]
+#![cfg(all(not(test), not(feature = "std")))]
 #![no_std]
-#![cfg(not(feature = "std"))]
+//#![cfg(not(feature = "std"))]
+//#![no_std]
+//#![cfg(not(feature = "std"))]
+#![cfg(all(not(test), not(feature = "std")))]
 #![feature(alloc)]
-#[cfg(not(feature = "std"))]
+//#![cfg(not(feature = "std"))]
+#![cfg(all(not(test), not(feature = "std")))]
 extern crate alloc;
 
 #[cfg(feature = "serde-derive")]
@@ -13,7 +16,6 @@ extern crate serde_derive;
 #[cfg(feature = "serde-derive")]
 extern crate serde;
 
-*/
 // Pprzlink message set
 // Note: the unused code will be optimized away
 // TODO: make a macro?
@@ -25,40 +27,15 @@ include!(concat!(env!("OUT_DIR"), "/intermcu.rs"));
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-    
-  
-    //use crate::datalink;
-    //use crate::ground;
-    //use crate::telemetry;
+    use crate::datalink;
+    use crate::ground;
+    use crate::telemetry;
     #[cfg(feature = "std")]
     use std::io::BufRead;
 
     #[cfg(feature = "test-serde")]
     use serde_json;
 
-    use bytes::{Buf, Bytes, BytesMut, BufMut, IntoBuf};
-
-    #[test]
-    fn test_bytes() {
-        let v = vec![1,2,0,4];
-        let mut buf = Bytes::from(v.as_slice()).into_buf();
-        //let mut t = buf.take(1);
-        assert_eq!(1, buf.get_u8());
-        assert_eq!(2, buf.get_u8());
-        assert_eq!(4, buf.get_u16_be());
-        /*
-        let mut v = vec![8;128];
-        let mut buf = v.as_mut_slice();
-        println!("{}",buf.len());
-        
-        println!("{}",buf.len());
-        */
-    }
-/*
     /// Simple test with Serde to JSON format
     /// Note: this seems to take a lot of time to compile, the performance is unknown
     #[cfg(feature = "test-serde")]
@@ -95,9 +72,80 @@ mod tests {
         println!("res={}",res);
     }
 
+    // test ser and deser
     #[cfg(feature = "std")]
     #[test]
-    fn big_test() {
+    fn test_serial() {
+        let f = std::fs::File::open("./test.txt").unwrap();
+        let mut cnt = 0;
+        for line in std::io::BufReader::new(f).lines() {
+            cnt = cnt + 1;
+            let l = line.unwrap();
+            let mut input: Vec<&str> = l.split(&[' '][..]).collect();
+            input.remove(0);
+            let l: String = input.iter().map(|a| String::from(*a) + " ").collect();
+            let mut l: Vec<char> = l.chars().collect();
+            l.pop();
+            let l: String = l.iter().collect();
+
+            println!(">>>>>>>>>>>>>>>>>>");
+            println!("Line # {}= >{}<", cnt, l);
+            let msg = telemetry::PprzMessageTelemetry::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, telemetry:, {:#?}", cnt, m);
+                    let s = m.ser();
+                    println!("vec={:?}",s);
+                    let v = telemetry::PprzMessageTelemetry::deser(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not telemetry msg:-( ");
+                }
+            }
+
+            let msg = ground::PprzMessageGround::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, ground:, {:#?}", cnt, m);
+                    let s = m.ser();
+                    println!("vec={:?}",s);
+                    let v = ground::PprzMessageGround::deser(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not ground msg:-( ");
+                }
+            }
+
+            let msg = datalink::PprzMessageDatalink::from_str(&l);
+            match msg {
+                Some(m) => {
+                    println!("line {}, datalink:, {:#?}", cnt, m);
+                    let s = m.ser();
+                    println!("vec={:?}",s);
+                    let v = datalink::PprzMessageDatalink::deser(&s).unwrap();
+                    println!("{:#?}", v);
+                    println!("<<<<<<<<<<<<<<<");
+                    continue;
+                }
+                None => {
+                    println!("Not datalink msg:-(");
+                }
+            }
+
+            panic!("Unrecognized input: {}", l);
+        }
+    }
+
+    // test from_str and to_str 
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_str() {
         let f = std::fs::File::open("./test.txt").unwrap();
         let mut cnt = 0;
         for line in std::io::BufReader::new(f).lines() {
@@ -163,5 +211,5 @@ mod tests {
             panic!("Unrecognized input: {}", l);
         }
     }
-    */
+    
 }

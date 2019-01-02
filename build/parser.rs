@@ -162,8 +162,8 @@ impl PprzMsgClass {
 
         let enums = self.emit_enum_names();
         let enums_parse = enums.clone();
-        let enums_msg_id = enums.clone();
-        let enums_msg_name = enums.clone();
+        //let enums_msg_id = enums.clone();
+        //let enums_msg_name = enums.clone();
         let enums_serialize = enums.clone();
         let enums_display = enums.clone();
         let enums_from_str = enums.clone();
@@ -218,19 +218,23 @@ impl PprzMsgClass {
                     }
                 }
 
+                /*
                 fn message_id(&self) -> u8 {
                     use self::#enumname::*;
                     match self {
                         #(#enums_msg_id(..) => #msg_ids,)*
                     }
                 }
+                */
 
+                /*
                 fn message_name(&self) -> String {
                     use self::#enumname::*;
                     match self {
                         #(#enums_msg_name(..) => #msg_names.to_string(),)*
                     }
                 }
+                */
 
                 pub fn from_str(s: &str) -> Option<#enumname> {
                     let mut input = s.chars();
@@ -248,6 +252,12 @@ impl PprzMsgClass {
                 
                 pub fn ser(&self) -> Vec<u8> {
                     let mut v = Vec::new();
+                    /*
+                    v.push(self.message_id());
+                    v.append(&mut self.ser());
+                    v
+                    */
+                    
                     use self::#enumname::*;
                     match self {
                         #(&#enums_serialize(ref body) => {
