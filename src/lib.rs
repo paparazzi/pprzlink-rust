@@ -1,8 +1,5 @@
-#![cfg(all(not(test), not(feature = "std")))]
-#![no_std]
-#![cfg(all(not(test), not(feature = "std")))]
-#![feature(alloc)]
-#![cfg(all(not(test), not(feature = "std")))]
+#![cfg_attr(not(feature = "std"), feature(alloc))]
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
 #[cfg(feature = "serde-derive")]
@@ -21,16 +18,41 @@ include!(concat!(env!("OUT_DIR"), "/datalink.rs"));
 include!(concat!(env!("OUT_DIR"), "/alert.rs"));
 include!(concat!(env!("OUT_DIR"), "/intermcu.rs"));
 
+pub use self::telemetry::PprzMessageTelemetry as PprzMessageTelemetry;
+pub use self::ground::PprzMessageGround as PprzMessageGround;
+pub use self::datalink::PprzMessageDatalink as PprzMessageDatalink;
+pub use self::alert::PprzMessageAlert as PprzMessageAlert;
+pub use self::intermcu::PprzMessageIntermcu as PprzMessageIntermcu;
+
+/// Enum encapsulating all message types
+#[derive(Clone, PartialEq, Debug)]
+pub enum PprzMessage {
+    Telemetry(PprzMessageTelemetry),
+    Ground(PprzMessageGround),
+    Datalink(PprzMessageDatalink),
+    Alert(PprzMessageAlert),
+    Intermcu(PprzMessageIntermcu),
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "std")]
     use crate::datalink;
+    #[cfg(feature = "std")]
     use crate::ground;
+    #[cfg(feature = "std")]
     use crate::telemetry;
     #[cfg(feature = "std")]
     use std::io::BufRead;
 
     #[cfg(feature = "test-serde")]
     use serde_json;
+
+    // dummy test for no-std testing
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
 
     /// Simple test with Serde to JSON format
     /// Note: this seems to take a lot of time to compile, the performance is unknown

@@ -1,5 +1,5 @@
 [package]
-name = "rust-pprzlink"
+name = "pprzlink"
 version = "0.1.0"
 authors = ["Michal Podhradsky <mpodhradsky@galois.com>"]
 edition = "2018"
@@ -29,5 +29,5 @@ optional = true
 [features]
 "serde-derive" = ["serde", "serde_derive","std"]
 "test-serde" = ["serde_json", "serde-derive"]
-std=[]
+"std"=[]
 default = ["std"]

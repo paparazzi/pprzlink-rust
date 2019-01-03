@@ -18,5 +18,5 @@ fn main() {
     parser::generate(&mut inf, &dest_path_rust);
 
     // Dont run build.rs unless it is changed
-    println!("cargo:rerun-if-changed=build.rs");
+    //println!("cargo:rerun-if-changed=build.rs");
 }

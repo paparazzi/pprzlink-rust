@@ -93,7 +93,6 @@ impl PprzMsgClass {
             use alloc::fmt;
             use alloc::string::String;
             use alloc::str::Chars;
-            use alloc::vec;
             use alloc::vec::Vec;
             use alloc::prelude::ToString;
         };
@@ -363,7 +362,7 @@ impl PprzMessage {
                 f.fieldtype.rust_writer(name, buf)
             }).collect::<Vec<Tokens>>();
             quote!{
-                let mut _tmp = vec![];
+                let mut _tmp = Vec::new();
                 #(#ser_vars)*
                 _tmp
             }
@@ -511,7 +510,7 @@ impl PprzField {
     }
 
     fn emit_description(&self) -> Tokens {
-        let mut desc = vec![];
+        let mut desc = Vec::new();
         if let Some(val) = self.description.clone() {
             desc.push(format!("\n/// {}.",val));
         }
