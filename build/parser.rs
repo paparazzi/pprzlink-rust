@@ -1,7 +1,7 @@
 use changecase::ChangeCase;
 use std::collections::HashMap;
 use std::default::Default;
-//use std::io::Write;
+
 use std::io::Read;
 use std::path::Path;
 use std::fs::File;
@@ -188,10 +188,7 @@ impl PprzMsgClass {
                 #(#enums(#structs)),*
             }
 
-            pub fn create_ivy_message(msg: &#enumname, sender: &str) -> String {
-                sender.to_string() + " " + &msg.to_string()
-            }
-
+            /*
             // TODO: should return the sender
             pub fn parse_ivy_msg_from_sender(input: &str, sender: Option<&str>) -> Option<#enumname> {
                 let mut input = input.chars();
@@ -204,8 +201,25 @@ impl PprzMsgClass {
                 }
                 #enumname::from_chars(&mut input)
             }
+            */
 
             impl #enumname {
+                pub fn create_ivy_message(&self, sender: &str) -> String {
+                    sender.to_string() + " " + &self.to_string()
+                }
+
+                pub fn parse_ivy_msg_from_sender(input: &str, sender: Option<&str>) -> Option<#enumname> {
+                    let mut input = input.chars();
+                    let parsed_sender: String = input.by_ref().take_while(|x| *x!=' ').collect();
+                    if let Some(expected_sender) = sender {
+                        if parsed_sender != expected_sender {
+                            // Senders don't match
+                            return None;
+                        }
+                    }
+                    Self::from_chars(&mut input)
+                }
+
                 pub fn deser(payload: &[u8]) -> Option<#enumname> {
                     use self::#enumname::*;
                     let id = payload[0];
@@ -631,12 +645,12 @@ impl PprzType {
                 #val = String::from_utf8(s_vec).unwrap();
             },
             Array(t) => {
-                    let r = t.rust_reader(Ident::from("let val"), buf.clone());
-                    quote!{
-                        let s_len = #buf.get_u8() as usize;
-                        for _ in 0..s_len {
-                            #r
-                            #val.push(val);
+                let r = t.rust_reader(Ident::from("let val"), buf.clone());
+                quote!{
+                    let s_len = #buf.get_u8() as usize;
+                    for _ in 0..s_len {
+                        #r
+                        #val.push(val);
                     }
                 }
             },
