@@ -416,6 +416,7 @@ impl PprzMessage {
                                 tmp += &val.to_string();
                                 tmp+=",";
                             }
+                            tmp+=" ";
                         }
                     },
                     Slice(_t,_l) => {
@@ -424,6 +425,7 @@ impl PprzMessage {
                                 tmp += &val.to_string();
                                 tmp+=",";
                             }
+                            tmp+=" ";
                         }
                     }
                     _ => quote!{
