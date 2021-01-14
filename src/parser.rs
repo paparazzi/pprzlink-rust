@@ -1333,7 +1333,7 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
                             "uint8" => PprzMsgBaseType::Uint8(0),
                             "uint8[]" => PprzMsgBaseType::Uint8Arr(vec![]),
                             "uint16" => PprzMsgBaseType::Uint16(0),
-                            "uint16[]" => PprzMsgBaseType::Uint16Arr(vec![]),
+                            "uint16[]" | "uint16[3]" => PprzMsgBaseType::Uint16Arr(vec![]),
                             "uint32" => PprzMsgBaseType::Uint32(0),
                             "uint32[]" => PprzMsgBaseType::Uint32Arr(vec![]),
                             "int8" => PprzMsgBaseType::Int8(0),
@@ -1343,9 +1343,9 @@ pub fn build_dictionary(file: File, pprzlink_version: PprzProtocolVersion) -> Pp
                             "int32" => PprzMsgBaseType::Int32(0),
                             "int32[]" => PprzMsgBaseType::Int32Arr(vec![]),
                             "char" => PprzMsgBaseType::Char(' '),
-                            "char[]" => PprzMsgBaseType::CharArr(vec![]),
+                            "char[]" | "char[5]" => PprzMsgBaseType::CharArr(vec![]),
                             "string" => PprzMsgBaseType::String(String::new()),
-                            _ => panic!("Unknown field type"),
+                            _ => panic!("Unknown field type: {:?}", attributes[type_idx].value),
                         };
 
                         // create a new field
